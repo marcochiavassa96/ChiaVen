@@ -1853,10 +1853,25 @@ function loadMessagesPage() {
   var listEl = document.getElementById('chat-list');
   if (!listEl) return;
   listEl.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text3);font-size:0.82rem">Cargando...</div>';
-  getSB().from('messages').select('*')
-    .or('from_user.eq.' + currentUser.id + ',to_user.eq.' + currentUser.id)
-    .order('created_at', { ascending: false })
-    .then(function(r) {
+  var uid2 = currentUser.id;
+  var pq1 = getSB().from('messages').select('*').eq('from_user', uid2).order('created_at', { ascending: false });
+  var pq2 = getSB().from('messages').select('*').eq('to_user', uid2).order('created_at', { ascending: false });
+  Promise.all([pq1, pq2]).then(function(pres) {
+    var r = { data: [] };
+    var pseen = {};
+    (pres[0].data || []).concat(pres[1].data || []).forEach(function(m) {
+      if (!pseen[m.id]) { pseen[m.id] = true; r.data.push(m); }
+    });
+  }).then(function() {}).catch(function(){});
+  var pq1b = getSB().from('messages').select('*').eq('from_user', uid2).order('created_at', { ascending: false });
+  var pq2b = getSB().from('messages').select('*').eq('to_user', uid2).order('created_at', { ascending: false });
+  Promise.all([pq1b, pq2b]).then(function(pr) {
+    var allMsgs = [];
+    var mseen = {};
+    (pr[0].data || []).concat(pr[1].data || []).forEach(function(m) {
+      if (!mseen[m.id]) { mseen[m.id] = true; allMsgs.push(m); }
+    });
+    var r = { data: allMsgs };
       var msgs = r.data || [];
       var convMap = {};
       msgs.forEach(function(m) {
