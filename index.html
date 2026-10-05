@@ -1555,8 +1555,28 @@ button,a,.nav-item,.bn-item,.car-card,.plan-card,.pay-method,.quick-action{touch
   
     </div>
 
-    <div class="page" id="page-messages"><div class="page-header-row"><div><div class="page-title">Mensajes</div><div class="page-subtitle">Conversaciones en tiempo real</div></div></div><div style="display:grid;grid-template-columns:290px 1fr;gap:0;background:#fff;border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;min-height:560px;box-shadow:var(--shadow)"><div style="border-right:1px solid var(--border);display:flex;flex-direction:column"><div style="padding:14px 16px;border-bottom:1px solid var(--border);font-weight:600;font-size:0.88rem;color:var(--text);flex-shrink:0">Conversaciones</div><div id="chat-list" style="overflow-y:auto;flex:1"></div></div><div style="display:flex;flex-direction:column"><div id="active-chat-header" style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0;min-height:66px"><div style="font-size:0.88rem;color:var(--text3)">Selecciona una conversacion<div id="active-chat-messages" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px;background:var(--bg)"><div id="active-chat-input-wrap" style="display:none;padding:12px 16px;border-top:1px solid var(--border);display:flex;gap:8px;flex-shrink:0"><input type="text" id="active-chat-input" class="form-input" placeholder="Escribi un mensaje..." style="flex:1"><button type="button" class="form-submit" onclick="sendActiveMessage()" style="padding:10px 18px">Enviar</button></div></div></div></div>
-</div></div></div>    </div>
+    <div class="page" id="page-messages">
+      <div class="page-header-row"><div><div class="page-title">Mensajes</div><div class="page-subtitle">Conversaciones en tiempo real</div></div></div>
+      <div style="display:grid;grid-template-columns:290px 1fr;gap:0;background:#fff;border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;min-height:560px;box-shadow:var(--shadow)">
+        <div style="border-right:1px solid var(--border);display:flex;flex-direction:column;min-width:0">
+          <div style="padding:14px 16px;border-bottom:1px solid var(--border);font-weight:600;font-size:0.88rem;color:var(--text);flex-shrink:0">Conversaciones</div>
+          <div id="chat-list" style="overflow-y:auto;flex:1"></div>
+        </div>
+        <div style="display:flex;flex-direction:column;min-width:0">
+          <div id="active-chat-header" style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0;min-height:66px">
+            <div style="font-size:0.88rem;color:var(--text3)">Seleccioná una conversación</div>
+          </div>
+          <div id="active-chat-messages" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px;background:var(--bg);min-height:420px">
+            <div style="text-align:center;padding:50px 20px;color:var(--text3);font-size:0.84rem">Seleccioná una conversación para ver los mensajes.</div>
+          </div>
+          <div id="active-chat-input-wrap" style="display:none;padding:12px 16px;border-top:1px solid var(--border);gap:8px;flex-shrink:0;background:#fff">
+            <input type="text" id="active-chat-input" class="form-input" placeholder="Escribí un mensaje..." style="flex:1">
+            <button type="button" class="form-submit" onclick="sendActiveMessage()" style="padding:10px 18px">Enviar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    </div>
 </div><!-- /main -->
 
   <!-- BOTTOM NAV -->
@@ -1735,38 +1755,55 @@ function openCarSellerChats(carId) {
 }
 
 function openMsgChat(carId, buyerId) {
+  if (!currentUser || !carId || !buyerId) return;
   activeMsgCarId = carId;
   activeMsgBuyerId = buyerId;
   if (msgPollInterval) clearInterval(msgPollInterval);
+
   getSB().from('cars').select('*').eq('id', carId).then(function(r) {
-    var car = (r.data && r.data[0]) || {};
+    if (r.error || !r.data || !r.data[0]) {
+      toast('No se pudo abrir esta conversación', 'error');
+      return;
+    }
+
+    var car = r.data[0];
     carCache[carId] = car;
     var isSeller = car.owner_id === currentUser.id;
-    var imgs = Array.isArray(car.images)&&car.images.length ? car.images : (car.image_url?[car.image_url]:[]);
+    var imgs = Array.isArray(car.images) && car.images.length ? car.images : (car.image_url ? [car.image_url] : []);
     var hdr = document.getElementById('active-chat-header');
+
     if (hdr) {
       hdr.innerHTML =
-        (imgs.length ? '<img src="' + imgs[0] + '" style="width:44px;height:36px;border-radius:7px;object-fit:cover">' :
+        (imgs.length ? '<img src="' + esc(imgs[0]) + '" style="width:44px;height:36px;border-radius:7px;object-fit:cover">' :
           '<div style="width:44px;height:36px;border-radius:7px;background:var(--bg);display:flex;align-items:center;justify-content:center;font-size:20px">&#128663;</div>') +
         '<div style="flex:1"><div style="font-weight:600;font-size:0.9rem">' +
-          esc((car.marca||'') + ' ' + (car.modelo||'') + ' ' + (car.anio||'')) +
+          esc((car.marca || '') + ' ' + (car.modelo || '') + ' ' + (car.anio || '')) +
         '</div><div style="font-size:0.72rem;color:var(--text3)">' +
           (isSeller ? 'Consulta de comprador' : 'Tu consulta') +
         '</div></div>' +
         '<strong style="color:var(--accent)">' + fmtPrice(car.precio) + '</strong>';
     }
-    _loadAndRenderMsgs(carId, buyerId);
-    msgPollInterval = setInterval(function() {
-      if (activeMsgCarId === carId) _loadAndRenderMsgs(carId, buyerId);
-    }, 3000);
+
     var wrap = document.getElementById('active-chat-input-wrap');
     if (wrap) wrap.style.display = 'flex';
+
+    _loadAndRenderMsgs(carId, buyerId);
+    msgPollInterval = setInterval(function() {
+      if (activeMsgCarId === carId && activeMsgBuyerId === buyerId) {
+        _loadAndRenderMsgs(carId, buyerId);
+      }
+    }, 3000);
+
     document.querySelectorAll('.chat-list-item').forEach(function(el) { el.classList.remove('active'); });
-    var sel = document.querySelector('.chat-list-item[data-carid="' + carId + '"][data-buyerid="' + buyerId + '"]');
-    if (sel) sel.classList.add('active');
+    var items = document.querySelectorAll('.chat-list-item');
+    items.forEach(function(el) {
+      if (el.dataset.carid === String(carId) && el.dataset.buyerid === String(buyerId)) el.classList.add('active');
+    });
+
+    var input = document.getElementById('active-chat-input');
+    if (input) setTimeout(function(){ input.focus(); }, 50);
   });
 }
-
 function _loadAndRenderMsgs(carId, buyerId) {
   // RLS ensures user only gets messages they're part of
   // Just filter by car_id - no user filter needed
@@ -1822,6 +1859,7 @@ function sendActiveMessage() {
         return;
       }
       _loadAndRenderMsgs(activeMsgCarId, activeMsgBuyerId);
+      loadMessagesPage();
       if (!isSeller) {
         setTimeout(function() {
           var responses = getBotResponse(text, car);
@@ -1830,7 +1868,11 @@ function sendActiveMessage() {
             from_user: currentUser.id, to_user: currentUser.id,
             car_id: activeMsgCarId,
             message: '[BOT] ' + resp.replace(/<[^>]+>/g,'')
-          }).then(function() { _loadAndRenderMsgs(activeMsgCarId, activeMsgBuyerId); });
+          }).then(function(botRes) {
+            if (botRes && botRes.error) console.error('Error respuesta asistente:', botRes.error);
+            _loadAndRenderMsgs(activeMsgCarId, activeMsgBuyerId);
+            loadMessagesPage();
+          });
         }, 1500 + Math.random()*800);
       }
     });
@@ -1853,84 +1895,103 @@ function loadMessagesPage() {
   var listEl = document.getElementById('chat-list');
   if (!listEl) return;
   listEl.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text3);font-size:0.82rem">Cargando...</div>';
-  var uid2 = currentUser.id;
-  var pq1 = getSB().from('messages').select('*').eq('from_user', uid2).order('created_at', { ascending: false });
-  var pq2 = getSB().from('messages').select('*').eq('to_user', uid2).order('created_at', { ascending: false });
-  Promise.all([pq1, pq2]).then(function(pres) {
-    var r = { data: [] };
-    var pseen = {};
-    (pres[0].data || []).concat(pres[1].data || []).forEach(function(m) {
-      if (!pseen[m.id]) { pseen[m.id] = true; r.data.push(m); }
-    });
-  }).then(function() {}).catch(function(){});
-  var pq1b = getSB().from('messages').select('*').eq('from_user', uid2).order('created_at', { ascending: false });
-  var pq2b = getSB().from('messages').select('*').eq('to_user', uid2).order('created_at', { ascending: false });
-  Promise.all([pq1b, pq2b]).then(function(pr) {
+
+  var uid = currentUser.id;
+  var sentQ = getSB().from('messages').select('*').eq('from_user', uid).order('created_at', { ascending: false });
+  var receivedQ = getSB().from('messages').select('*').eq('to_user', uid).order('created_at', { ascending: false });
+
+  Promise.all([sentQ, receivedQ]).then(function(pr) {
+    if ((pr[0] && pr[0].error) || (pr[1] && pr[1].error)) {
+      console.error('Error cargando conversaciones:', pr[0] && pr[0].error, pr[1] && pr[1].error);
+      listEl.innerHTML = '<div style="padding:24px;text-align:center;color:var(--red);font-size:0.84rem">No se pudieron cargar los mensajes.</div>';
+      return;
+    }
+
     var allMsgs = [];
-    var mseen = {};
+    var seen = {};
     (pr[0].data || []).concat(pr[1].data || []).forEach(function(m) {
-      if (!mseen[m.id]) { mseen[m.id] = true; allMsgs.push(m); }
+      if (!seen[m.id]) { seen[m.id] = true; allMsgs.push(m); }
     });
-    var r = { data: allMsgs };
-      var msgs = r.data || [];
-      var convMap = {};
-      msgs.forEach(function(m) {
-        // Group conversations by car + buyer (non-seller) pair
-        // For each message, determine who the buyer is
-        // Buyer = the one who is NOT the car owner
-        // We'll resolve this after loading car data
-        // For now group by car + the non-current-user participant
-        var otherId = m.from_user === currentUser.id ? m.to_user : m.from_user;
-        // Skip pure self-messages that aren't bot messages
-        if (otherId === currentUser.id && !(m.message||'').startsWith('[BOT]')) {
-          // Self-message means buyer sent bot message - use currentUser as buyer
-          otherId = currentUser.id;
-        }
-        // Key: car_id + the "other" person (could be buyer or seller depending on role)
-        var key = (m.car_id||'') + '|' + (otherId === currentUser.id ? 'self' : otherId);
-        if (!convMap[key]) convMap[key] = {
-          carId: m.car_id,
-          otherId: otherId,
-          buyerId: null, // will resolve below
-          lastMsg: m.message,
-          ts: m.created_at
-        };
-      });
-      var convs = Object.values(convMap);
-      if (!convs.length) {
-        listEl.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:0.84rem">Sin conversaciones aun.<br><br>Abri un auto y toca <strong>Chatear con la agencia</strong>.</div>';
+
+    if (!allMsgs.length) {
+      listEl.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:0.84rem">Sin conversaciones aún.<br><br>Abrí un auto y tocá <strong>Chatear con la agencia</strong>.</div>';
+      return;
+    }
+
+    getSB().from('cars').select('id,marca,modelo,anio,images,image_url,owner_id,precio').then(function(r2) {
+      if (r2.error) {
+        console.error('Error cargando autos del chat:', r2.error);
+        listEl.innerHTML = '<div style="padding:24px;text-align:center;color:var(--red);font-size:0.84rem">No se pudieron cargar las conversaciones.</div>';
         return;
       }
-      getSB().from('cars').select('id,marca,modelo,anio,images,image_url,owner_id,precio').then(function(r2) {
-        var carMap = {};
-        (r2.data||[]).forEach(function(car) { carMap[car.id] = car; carCache[car.id] = car; });
-        listEl.innerHTML = convs.map(function(cv) {
-          var car = carMap[cv.carId] || {};
-          var iAmSeller = car.owner_id === currentUser.id;
-          // If I'm seller, the buyer is the other person; if I'm buyer, pass my own id
-          var chatBuyerId = iAmSeller ? cv.otherId : currentUser.id;
-          var imgs = Array.isArray(car.images)&&car.images.length ? car.images : (car.image_url?[car.image_url]:[]);
-          var thumb = imgs.length ? '<img src="' + imgs[0] + '" style="width:100%;height:100%;object-fit:cover">' : '&#128663;';
-          var title = (car.marca||'Auto') + ' ' + (car.modelo||'') + (car.anio?' '+car.anio:'');
-          var lastText = (cv.lastMsg||'').replace('[BOT] ','').substring(0,38);
-          var time = cv.ts ? new Date(cv.ts).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}) : '';
-          var isActive = cv.carId===activeMsgCarId && chatBuyerId===activeMsgBuyerId;
-          return '<div class="chat-list-item' + (isActive?' active':'') + '" ' +
-            'data-carid="' + (cv.carId||'') + '" data-buyerid="' + (chatBuyerId||'') + '" ' +
-            'onclick="openMsgChat(this.dataset.carid,this.dataset.buyerid)">' +
-            '<div style="width:44px;height:36px;border-radius:8px;overflow:hidden;background:var(--bg);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:18px">' + thumb + '</div>' +
-            '<div style="flex:1;min-width:0">' +
-              '<div style="font-size:0.82rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(title) + '</div>' +
-              '<div style="font-size:0.7rem;color:var(--text3)">' + (isBuyer?'Comprando':'Vendiendo') + '</div>' +
-              '<div style="font-size:0.74rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(lastText) + '</div>' +
-            '</div>' +
-            '<div style="font-size:0.65rem;color:var(--text3);flex-shrink:0">' + time + '</div>' +
-          '</div>';
-        }).join('');
-      });
-    });
-}
 
+      var carMap = {};
+      (r2.data || []).forEach(function(car) {
+        carMap[car.id] = car;
+        carCache[car.id] = car;
+      });
+
+      var convMap = {};
+      allMsgs.forEach(function(m) {
+        if (!m.car_id) return;
+        var car = carMap[m.car_id];
+        if (!car) return;
+
+        var isSeller = car.owner_id === uid;
+        var otherId = isSeller ? m.from_user : car.owner_id;
+        if (!otherId) return;
+
+        var key = m.car_id + '|' + otherId;
+        if (!convMap[key] || new Date(m.created_at || 0) > new Date(convMap[key].ts || 0)) {
+          convMap[key] = {
+            carId: m.car_id,
+            otherId: otherId,
+            lastMsg: m.message || '',
+            ts: m.created_at || ''
+          };
+        }
+      });
+
+      var convs = Object.values(convMap).sort(function(a,b) {
+        return new Date(b.ts || 0) - new Date(a.ts || 0);
+      });
+
+      if (!convs.length) {
+        listEl.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:0.84rem">Sin conversaciones aún.</div>';
+        return;
+      }
+
+      listEl.innerHTML = convs.map(function(cv) {
+        var car = carMap[cv.carId] || {};
+        var isSeller = car.owner_id === uid;
+        var chatBuyerId = isSeller ? cv.otherId : uid;
+        var imgs = Array.isArray(car.images) && car.images.length ? car.images : (car.image_url ? [car.image_url] : []);
+        var thumb = imgs.length
+          ? '<img src="' + esc(imgs[0]) + '" style="width:100%;height:100%;object-fit:cover">'
+          : '&#128663;';
+        var title = (car.marca || 'Auto') + ' ' + (car.modelo || '') + (car.anio ? ' ' + car.anio : '');
+        var lastText = (cv.lastMsg || '').replace('[BOT] ', '').substring(0, 45);
+        var time = cv.ts ? new Date(cv.ts).toLocaleTimeString('es-AR', {hour:'2-digit', minute:'2-digit'}) : '';
+        var isActive = cv.carId === activeMsgCarId && chatBuyerId === activeMsgBuyerId;
+
+        return '<div class="chat-list-item' + (isActive ? ' active' : '') + '" ' +
+          'data-carid="' + esc(String(cv.carId)) + '" data-buyerid="' + esc(String(chatBuyerId)) + '" ' +
+          'onclick="openMsgChat(this.dataset.carid,this.dataset.buyerid)">' +
+          '<div style="width:44px;height:36px;border-radius:8px;overflow:hidden;background:var(--bg);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:18px">' + thumb + '</div>' +
+          '<div style="flex:1;min-width:0">' +
+            '<div style="font-size:0.82rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(title) + '</div>' +
+            '<div style="font-size:0.7rem;color:var(--text3)">' + (isSeller ? 'Vendiendo' : 'Comprando') + '</div>' +
+            '<div style="font-size:0.74rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(lastText) + '</div>' +
+          '</div>' +
+          '<div style="font-size:0.65rem;color:var(--text3);flex-shrink:0">' + time + '</div>' +
+        '</div>';
+      }).join('');
+    });
+  }).catch(function(err) {
+    console.error('Error cargando conversaciones:', err);
+    listEl.innerHTML = '<div style="padding:24px;text-align:center;color:var(--red);font-size:0.84rem">No se pudieron cargar los mensajes.</div>';
+  });
+}
 function stopSubscription() { if (msgPollInterval) { clearInterval(msgPollInterval); msgPollInterval = null; } }
 
 document.addEventListener('DOMContentLoaded', function() {
