@@ -2342,8 +2342,11 @@ function showApp() {
   try { saved = JSON.parse(localStorage.getItem('chiaven_profile_' + (currentUser && currentUser.id)) || '{}'); } catch(e) {}
   if (saved.photo) updateProfilePhotoUI(saved.photo);
   initChatSystem();
+  syncRemoteNegotiations();
   setTimeout(function() { checkForNewMatches(); checkForDeals(); }, 3000);
   setInterval(function() { checkForNewMatches(); checkForDeals(); }, 120000);
+  if (remoteNegotiationSyncInterval) clearInterval(remoteNegotiationSyncInterval);
+  remoteNegotiationSyncInterval = setInterval(syncRemoteNegotiations, 10000);
   navigate('home');
 }
 
@@ -3468,7 +3471,18 @@ function clickNotif(id) {
   var n = getNotifications().filter(function(x) { return x.id === id; })[0];
   closeNotifications();
   closeChat();
-  if (n && n.action) setTimeout(function() { navigate(n.action); }, 200);
+  if (n && n.action) setTimeout(function() {
+    if (String(n.action).indexOf('operation:') === 0) {
+      var opId = String(n.action).split(':')[1];
+      var op = getOperations().find(function(o) { return o.id === opId; });
+      if (op) {
+        activeOperation = op;
+        openNegotiationModal(op);
+        return;
+      }
+    }
+    navigate(n.action);
+  }, 200);
 }
 function closeNotifications() { var m = document.getElementById('notif-modal'); if (m) m.classList.add('hidden'); }
 function clearAllNotifications() { saveNotifications([]); openNotifications(); }
@@ -4333,6 +4347,8 @@ function loadHomeMatchList() {
 
 var OPERATIONS_KEY = 'chiaven_operations';
 var activeOperation = null;
+var remoteNegotiationSyncInterval = null;
+var REMOTE_EVENT_PREFIX = '[CHIAVEN_EVENT]';
 
 // ── Helpers ──
 function getOperations() {
@@ -4414,7 +4430,10 @@ function startNegotiation(carId) {
   activeOperation = op;
   closeCarDetail();
   openNegotiationModal(op);
-  addNotification('🤝', 'Negociación iniciada', car.marca + ' ' + car.modelo, 'green', null);
+  addNotification('🤝', 'Negociación iniciada', car.marca + ' ' + car.modelo, 'green', 'operation:' + op.id);
+
+  // Avisar al vendedor aunque no esté dentro de la negociación.
+  sendRemoteNegotiationEvent('negotiation_started', op, op.seller_id); 
 }
 
 // ── Open negotiation modal ──
@@ -4605,11 +4624,19 @@ function sendProposal() {
   };
   activeOperation.history = activeOperation.history || [];
   activeOperation.history.push(proposal);
-  activeOperation.current_offer = price;
-  activeOperation.chiaven_commission = c.commission;
-  activeOperation.final_price = c.finalPrice;
+  // La oferta pasa a ser el último precio negociado.
+  activeOperation.current_offer = sellerReceives;
+  activeOperation.chiaven_commission = commission;
+  activeOperation.final_price = buyerPrice;
   activeOperation.updated_at = new Date().toISOString();
   updateOperation(activeOperation);
+
+  // Persistir el evento en Supabase para que el otro usuario lo reciba.
+  var recipientId = activeOperation.buyer_id === currentUser.id
+    ? activeOperation.seller_id
+    : activeOperation.buyer_id;
+  sendRemoteNegotiationEvent('proposal', activeOperation, recipientId);
+
   document.getElementById('proposal-price').value = '';
   document.getElementById('proposal-note').value = '';
   document.getElementById('make-proposal-form').style.display = 'none';
@@ -4663,6 +4690,109 @@ function updateOperation(op) {
   var idx = ops.findIndex(function(o){ return o.id === op.id; });
   if (idx >= 0) ops[idx] = op; else ops.push(op);
   saveOperations(ops);
+}
+
+function sendRemoteNegotiationEvent(eventType, op, recipientId) {
+  if (!currentUser || !recipientId || recipientId === currentUser.id || !op) return;
+  var payload = {
+    event: eventType,
+    operation: op,
+    sent_at: new Date().toISOString()
+  };
+  getSB().from('messages').insert({
+    from_user: currentUser.id,
+    to_user: recipientId,
+    car_id: op.car_id,
+    message: REMOTE_EVENT_PREFIX + JSON.stringify(payload)
+  }).then(function(res) {
+    if (res && res.error) console.error('Error sincronizando negociación:', res.error);
+  }).catch(function(err) {
+    console.error('Error sincronizando negociación:', err);
+  });
+}
+
+function syncRemoteNegotiations() {
+  if (!currentUser || !currentUser.id) return;
+
+  getSB().from('messages').select('*')
+    .eq('to_user', currentUser.id)
+    .order('created_at', { ascending: false })
+    .limit(100)
+    .then(function(res) {
+      if (res && res.error) {
+        console.error('Error leyendo eventos de negociación:', res.error);
+        return;
+      }
+
+      var rows = res.data || [];
+      var processed = {};
+      try { processed = JSON.parse(localStorage.getItem('chiaven_remote_events_' + currentUser.id) || '{}'); } catch(e) {}
+
+      var changed = false;
+      rows.forEach(function(row) {
+        var raw = row.message || '';
+        if (raw.indexOf(REMOTE_EVENT_PREFIX) !== 0 || processed[row.id]) return;
+
+        var payload;
+        try {
+          payload = JSON.parse(raw.slice(REMOTE_EVENT_PREFIX.length));
+        } catch(e) {
+          processed[row.id] = true;
+          changed = true;
+          return;
+        }
+
+        var op = payload.operation;
+        if (!op || !op.id) {
+          processed[row.id] = true;
+          changed = true;
+          return;
+        }
+
+        // Solo procesamos eventos dirigidos a esta cuenta.
+        if (op.buyer_id !== currentUser.id && op.seller_id !== currentUser.id) {
+          processed[row.id] = true;
+          changed = true;
+          return;
+        }
+
+        var ops = getOperations();
+        var idx = ops.findIndex(function(o) { return o.id === op.id; });
+        if (idx >= 0) ops[idx] = op;
+        else ops.push(op);
+        saveOperations(ops);
+
+        var lastProposal = (op.history || []).filter(function(h) { return h.type === 'proposal'; }).pop();
+        var senderIsBuyer = row.from_user === op.buyer_id;
+        var carLabel = op.car_name || 'Vehículo';
+        var action = 'operation:' + op.id;
+
+        if (payload.event === 'proposal' && lastProposal) {
+          var shownPrice = lastProposal.buyerPrice || lastProposal.finalPrice || lastProposal.price;
+          var title = senderIsBuyer ? '💰 Nueva oferta de comprador' : '↩️ Nueva contraoferta';
+          addNotification(title.split(' ')[0], title.substring(title.indexOf(' ') + 1), carLabel + ' · ' + fmtPrice(shownPrice), 'green', action);
+        } else if (payload.event === 'negotiation_started') {
+          addNotification('🤝', 'Nueva negociación', carLabel, 'green', action);
+        }
+
+        processed[row.id] = true;
+        changed = true;
+      });
+
+      if (changed) {
+        // Conservamos una ventana acotada para no llenar localStorage.
+        var keys = Object.keys(processed);
+        if (keys.length > 500) {
+          keys.sort(function(a,b) { return Number(a) - Number(b); });
+          keys.slice(0, keys.length - 500).forEach(function(k) { delete processed[k]; });
+        }
+        localStorage.setItem('chiaven_remote_events_' + currentUser.id, JSON.stringify(processed));
+        loadMyOperations();
+      }
+    })
+    .catch(function(err) {
+      console.error('Error sincronizando notificaciones de negociación:', err);
+    });
 }
 
 // ── RESERVATION ──
