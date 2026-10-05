@@ -2312,6 +2312,8 @@ function initApp() {
 function showAuth() {
   document.getElementById('auth-screen').style.display = 'flex';
   document.getElementById('app-screen').classList.remove('visible');
+  var topbar = document.getElementById('topbar');
+  if (topbar) topbar.style.display = 'none';
 }
 
 function showApp() {
@@ -4721,7 +4723,8 @@ function sendRemoteNegotiationEvent(eventType, op, recipientId) {
 function syncRemoteNegotiations() {
   if (!currentUser || !currentUser.id) return;
 
-  getSB().from('messages').select('*')
+  try {
+    getSB().from('messages').select('*')
     .eq('to_user', currentUser.id)
     .order('created_at', { ascending: false })
     .limit(100)
@@ -4812,6 +4815,9 @@ function syncRemoteNegotiations() {
     .catch(function(err) {
       console.error('Error sincronizando notificaciones de negociación:', err);
     });
+  } catch (err) {
+    console.error('Error iniciando sincronización de notificaciones:', err);
+  }
 }
 
 // ── RESERVATION ──
