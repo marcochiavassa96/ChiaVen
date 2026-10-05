@@ -1744,6 +1744,7 @@ function openCarSellerChats(carId) {
     getSB().from('messages').select('*').eq('car_id', carId).then(function(r) {
       var buyers = {};
       (r.data||[]).forEach(function(m) {
+        if ((m.message || '').indexOf(REMOTE_EVENT_PREFIX) === 0) return;
         var b = m.from_user === currentUser.id ? m.to_user : m.from_user;
         if (b !== currentUser.id) buyers[b] = true;
       });
@@ -1808,7 +1809,12 @@ function _loadAndRenderMsgs(carId, buyerId) {
   // Just filter by car_id - no user filter needed
   getSB().from('messages').select('*').eq('car_id', carId)
     .order('created_at', { ascending: true })
-    .then(function(r) { _renderMsgs(r.data || []); });
+    .then(function(r) {
+      var rows = (r.data || []).filter(function(m) {
+        return (m.message || '').indexOf(REMOTE_EVENT_PREFIX) !== 0;
+      });
+      _renderMsgs(rows);
+    });
 }
 
 function _renderMsgs(msgs) {
@@ -1909,6 +1915,7 @@ function loadMessagesPage() {
     var allMsgs = [];
     var seen = {};
     (pr[0].data || []).concat(pr[1].data || []).forEach(function(m) {
+      if ((m.message || '').indexOf(REMOTE_EVENT_PREFIX) === 0) return;
       if (!seen[m.id]) { seen[m.id] = true; allMsgs.push(m); }
     });
 
@@ -4731,7 +4738,19 @@ function syncRemoteNegotiations() {
       var changed = false;
       rows.forEach(function(row) {
         var raw = row.message || '';
-        if (raw.indexOf(REMOTE_EVENT_PREFIX) !== 0 || processed[row.id]) return;
+        if (processed[row.id]) return;
+
+        // Mensaje de chat normal: también genera aviso para el receptor.
+        if (raw.indexOf(REMOTE_EVENT_PREFIX) !== 0) {
+          if (row.from_user && row.from_user !== currentUser.id) {
+            var chatCar = carCache[row.car_id] || {};
+            var chatLabel = ((chatCar.marca || '') + ' ' + (chatCar.modelo || '')).trim() || 'Vehículo';
+            addNotification('💬', 'Nuevo mensaje', chatLabel, 'green', 'messages');
+          }
+          processed[row.id] = true;
+          changed = true;
+          return;
+        }
 
         var payload;
         try {
