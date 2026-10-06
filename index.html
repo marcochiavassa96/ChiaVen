@@ -1703,6 +1703,63 @@ var activeMsgBuyerId = null;
 var msgPollInterval = null;
 var currentChatCarId = null;
 
+function syncCardChatFromRemote(carId, callback) {
+  if (!currentUser || !carId) { if (callback) callback(); return; }
+  var car = carCache[carId];
+  if (!car || !car.owner_id) { if (callback) callback(); return; }
+
+  getSB().from('messages').select('*').eq('car_id', carId)
+    .order('created_at', { ascending: true })
+    .then(function(r) {
+      if (r && r.error) {
+        console.error('Error sincronizando chat de tarjeta:', r.error);
+        if (callback) callback();
+        return;
+      }
+
+      var rows = (r.data || []).filter(function(m) {
+        return (m.from_user === currentUser.id && m.to_user === car.owner_id) ||
+               (m.to_user === currentUser.id && m.from_user === car.owner_id);
+      });
+
+      var bots = (chatSessions[carId] || []).filter(function(m) {
+        return m.role === 'bot';
+      });
+
+      var remote = rows.map(function(m) {
+        return {
+          role: m.from_user === currentUser.id ? 'sent' : 'received',
+          text: m.message || '',
+          ts: m.created_at || new Date().toISOString(),
+          remote_id: m.id
+        };
+      });
+
+      // La tarjeta y la pestaña Mensajes comparten ahora la misma conversación.
+      // Conservamos únicamente las respuestas del asistente local y usamos
+      // Supabase como fuente de verdad para los mensajes entre agencias.
+      remote.forEach(function(m) {
+        if (m.text.indexOf(REMOTE_EVENT_PREFIX) === 0) return;
+      });
+      remote = remote.filter(function(m) {
+        return m.text.indexOf(REMOTE_EVENT_PREFIX) !== 0;
+      });
+
+      chatSessions[carId] = bots.concat(remote);
+      chatSessions[carId].sort(function(a,b) {
+        return new Date(a.ts || 0) - new Date(b.ts || 0);
+      });
+      saveChatSessions();
+
+      if (activeChatCarId === carId) renderChatMessages();
+      if (callback) callback();
+    })
+    .catch(function(err) {
+      console.error('Error sincronizando chat de tarjeta:', err);
+      if (callback) callback();
+    });
+}
+
 function openCarChat(carId) {
   if (!currentUser) { showAuth(); return; }
   activeChatCarId = carId;
@@ -1764,8 +1821,15 @@ function openCarChat(carId) {
         });
       }
     })
+    .then(function() {
+      // Recuperar lo hablado anteriormente por esta tarjeta.
+      syncCardChatFromRemote(carId, function() {
+        renderChatMessages();
+      });
+    })
     .catch(function(err) {
-      console.error('Error registrando inicio de chat:', err);
+      console.error('Error registrando/sincronizando inicio de chat:', err);
+      syncCardChatFromRemote(carId);
     });
 
   renderChatMessages();
@@ -3921,7 +3985,11 @@ function sendChatMessage() {
       if (res && res.error) {
         console.error('Error enviando mensaje desde tarjeta:', res.error);
         toast('No se pudo enviar el mensaje a la agencia', 'error');
+        return;
       }
+      // La misma conversación queda disponible en "Mensajes".
+      syncCardChatFromRemote(carId);
+      loadMessagesPage();
     }).catch(function(err) {
       console.error('Error enviando mensaje desde tarjeta:', err);
       toast('No se pudo enviar el mensaje a la agencia', 'error');
