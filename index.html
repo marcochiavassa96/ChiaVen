@@ -3859,23 +3859,45 @@ function sendChatMessage() {
   var input = document.getElementById('chat-input');
   var text = (input.value || '').trim();
   if (!text || !activeChatCarId) return;
+  var carId = activeChatCarId;
+  var car = carCache[carId];
   input.value = '';
-  // Add user message
-  if (!chatSessions[activeChatCarId]) chatSessions[activeChatCarId] = [];
-  chatSessions[activeChatCarId].push({ role: 'sent', text: text, ts: new Date().toISOString() });
+
+  // Guardar localmente y enviar también a la agencia propietaria.
+  if (!chatSessions[carId]) chatSessions[carId] = [];
+  chatSessions[carId].push({ role: 'sent', text: text, ts: new Date().toISOString() });
   saveChatSessions();
   renderChatMessages();
-  // Bot responds after delay
+
+  // El chat de la tarjeta ahora usa el mismo canal remoto que "Mensajes".
+  if (currentUser && car && car.owner_id && car.owner_id !== currentUser.id) {
+    getSB().from('messages').insert({
+      from_user: currentUser.id,
+      to_user: car.owner_id,
+      car_id: carId,
+      message: text
+    }).then(function(res) {
+      if (res && res.error) {
+        console.error('Error enviando mensaje desde tarjeta:', res.error);
+        toast('No se pudo enviar el mensaje a la agencia', 'error');
+      }
+    }).catch(function(err) {
+      console.error('Error enviando mensaje desde tarjeta:', err);
+      toast('No se pudo enviar el mensaje a la agencia', 'error');
+    });
+  }
+
+  // Mantener el asistente automático para no romper la experiencia actual.
   setTimeout(function() {
-    var car = activeChatCarId ? carCache[activeChatCarId] : null;
-    var responses = getBotResponse(text, car);
+    var liveCar = activeChatCarId ? carCache[activeChatCarId] : car;
+    var responses = getBotResponse(text, liveCar);
     var response = Array.isArray(responses) ? responses[Math.floor(Math.random() * responses.length)] : responses;
-    addBotMessage(activeChatCarId, response);
-    // After 3 user messages, suggest closing the deal
-    var userMsgs = chatSessions[activeChatCarId].filter(function(m) { return m.role === 'sent'; }).length;
+    addBotMessage(carId, response);
+    var session = chatSessions[carId] || [];
+    var userMsgs = session.filter(function(m) { return m.role === 'sent'; }).length;
     if (userMsgs === 3) {
       setTimeout(function() {
-        addBotMessage(activeChatCarId, '🤝 ¿Ya tenés suficiente información? Si estás listo podés <strong>cerrar el trato</strong> tocando el botón de abajo. Esto habilitará el contacto directo con la agencia para coordinar la entrega.');
+        addBotMessage(carId, '🤝 ¿Ya tenés suficiente información? Si estás listo podés <strong>cerrar el trato</strong> tocando el botón de abajo. Esto habilitará el contacto directo con la agencia para coordinar la entrega.');
       }, 1500);
     }
   }, 1200 + Math.random() * 800);
@@ -4442,7 +4464,9 @@ function startNegotiation(carId) {
   addNotification('🤝', 'Negociación iniciada', car.marca + ' ' + car.modelo, 'green', 'operation:' + op.id);
 
   // Avisar al vendedor aunque no esté dentro de la negociación.
-  sendRemoteNegotiationEvent('negotiation_started', op, op.seller_id); 
+  sendRemoteNegotiationEvent('negotiation_started', op, op.seller_id).then(function(res) {
+    if (res && res.error) console.error('No se pudo notificar el inicio de negociación:', res.error);
+  });
 }
 
 // ── Open negotiation modal ──
@@ -4644,7 +4668,11 @@ function sendProposal() {
   var recipientId = activeOperation.buyer_id === currentUser.id
     ? activeOperation.seller_id
     : activeOperation.buyer_id;
-  sendRemoteNegotiationEvent('proposal', activeOperation, recipientId);
+  sendRemoteNegotiationEvent('proposal', activeOperation, recipientId).then(function(res) {
+    if (res && res.error) {
+      toast('La propuesta quedó guardada, pero no se pudo notificar al otro usuario', 'error');
+    }
+  });
 
   document.getElementById('proposal-price').value = '';
   document.getElementById('proposal-note').value = '';
@@ -4702,21 +4730,31 @@ function updateOperation(op) {
 }
 
 function sendRemoteNegotiationEvent(eventType, op, recipientId) {
-  if (!currentUser || !recipientId || recipientId === currentUser.id || !op) return;
+  if (!currentUser || !recipientId || recipientId === currentUser.id || !op) {
+    return Promise.resolve({ error: null });
+  }
   var payload = {
     event: eventType,
     operation: op,
     sent_at: new Date().toISOString()
   };
-  getSB().from('messages').insert({
-    from_user: currentUser.id,
-    to_user: recipientId,
-    car_id: op.car_id,
-    message: REMOTE_EVENT_PREFIX + JSON.stringify(payload)
-  }).then(function(res) {
-    if (res && res.error) console.error('Error sincronizando negociación:', res.error);
-  }).catch(function(err) {
-    console.error('Error sincronizando negociación:', err);
+  return new Promise(function(resolve) {
+    getSB().from('messages').insert({
+      from_user: currentUser.id,
+      to_user: recipientId,
+      car_id: op.car_id,
+      message: REMOTE_EVENT_PREFIX + JSON.stringify(payload)
+    }).then(function(res) {
+      if (res && res.error) {
+        console.error('Error sincronizando negociación:', res.error);
+        resolve(res);
+      } else {
+        resolve({ data: res ? res.data : null, error: null });
+      }
+    }).catch(function(err) {
+      console.error('Error sincronizando negociación:', err);
+      resolve({ data: null, error: { message: err.message || String(err) } });
+    });
   });
 }
 
