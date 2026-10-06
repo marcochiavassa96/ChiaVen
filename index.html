@@ -135,17 +135,20 @@ input,select,textarea,button{font-family:var(--font)}
 .auth-section-title{font-size:0.7rem;color:var(--text3);letter-spacing:0.1em;text-transform:uppercase;padding-bottom:6px;border-bottom:1px solid var(--border);margin-top:4px}
 
 /* ── APP ── */
-#app-screen{display:none;height:100dvh;overflow:hidden;flex-direction:row;padding-top:var(--topbar-h)}
+#app-screen{display:none;height:100dvh;overflow:hidden;flex-direction:row;padding-top:0}
 #app-screen.visible{display:flex}
 
 /* ── SIDEBAR ── */
 #sidebar{width:var(--sidebar-w);background:var(--navy2);border-right:1px solid rgba(255,255,255,0.06);display:flex;flex-direction:column;transition:width var(--transition);flex-shrink:0;position:fixed;top:0;left:0;bottom:0;z-index:600;overflow:hidden}
 #sidebar.collapsed{width:60px}
-.sidebar-logo{padding:16px 18px;display:flex;align-items:center;gap:10px;white-space:nowrap;height:var(--topbar-h);border-bottom:1px solid rgba(255,255,255,0.06);flex-shrink:0}
+.sidebar-logo{padding:10px 12px;display:flex;align-items:center;justify-content:center;white-space:nowrap;height:90px;border-bottom:1px solid rgba(255,255,255,0.06);flex-shrink:0}
+.sidebar-logo img{display:block;width:190px;height:72px;object-fit:contain;background:#fff;border-radius:10px;padding:6px 9px;box-shadow:0 2px 10px rgba(0,0,0,.18)}
 .sidebar-logo-icon{width:30px;height:30px;border-radius:7px;background:var(--accent);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-weight:800;font-size:13px;color:#fff;letter-spacing:-0.05em}
 .sidebar-logo-text{font-size:1.1rem;font-weight:800;letter-spacing:-0.05em;color:#fff;opacity:1;transition:opacity var(--transition)}
 .sidebar-logo-text span{color:var(--accent)}
 #sidebar.collapsed .sidebar-logo-text{opacity:0;width:0;overflow:hidden}
+#sidebar.collapsed .sidebar-logo{height:var(--topbar-h);padding:10px 8px}
+#sidebar.collapsed .sidebar-logo img{width:42px;height:42px;padding:4px;object-fit:cover;object-position:50% 25%}
 #sidebar-toggle-btn{position:fixed;top:calc(var(--topbar-h) + 14px);left:calc(var(--sidebar-w) - 13px);width:26px;height:26px;border-radius:50%;background:#fff;border:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:700;transition:left var(--transition);box-shadow:var(--shadow)}
 #sidebar-toggle-btn:hover{background:var(--accent-light);border-color:var(--accent)}
 #sidebar-toggle-btn svg{transition:transform var(--transition)}
@@ -170,7 +173,7 @@ input,select,textarea,button{font-family:var(--font)}
 #sidebar.collapsed .logout-btn{display:none}
 
 /* ── MAIN ── */
-#main{flex:1;overflow-y:auto;margin-left:var(--sidebar-w);background:var(--bg);transition:margin-left var(--transition)}
+#main{flex:1;overflow-y:auto;height:calc(100dvh - var(--topbar-h));margin-left:var(--sidebar-w);margin-top:var(--topbar-h);background:var(--bg);transition:margin-left var(--transition)}
 #main.full{margin-left:0}
 .page{display:none;padding:28px;animation:fadeIn 0.2s ease;max-width:1400px}
 .page.active{display:block}
@@ -1121,13 +1124,7 @@ button,a,.nav-item,.bn-item,.car-card,.plan-card,.pay-method,.quick-action{touch
 <div id="app-screen">
   <div id="sidebar">
     <div class="sidebar-logo">
-      <div class="sidebar-logo-icon" style="background:transparent;width:32px;height:32px">
-        <svg viewBox="0 0 32 32" width="32" height="32" aria-label="CHIAVEN">
-          <path d="M5 8.5L11.5 4H27L20.5 8.5H12.8L9.2 11v10l3.6 2.5h7.7L27 28H11.5L5 23.5z" fill="#1677FF"/>
-          <path d="M11.5 4L18 8.5 12.8 11 9.2 11zM20.5 8.5L27 4v8.5L20.5 17zM12.8 21L20.5 17 27 20.5 20.5 28z" fill="#111827"/>
-        </svg>
-      </div>
-      <div class="sidebar-logo-text">CHIA<span style="color:var(--accent2)">VEN</span></div>
+      <img src="/assets/chiaven-logo.svg" alt="CHIAVEN — La red privada de agencias">
     </div>
     </div>
     <div class="sidebar-nav">
