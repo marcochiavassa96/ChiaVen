@@ -4698,6 +4698,17 @@ function startNegotiation(carId) {
   openNegotiationModal(op);
   addNotification('🤝', 'Negociación iniciada', car.marca + ' ' + car.modelo, 'green', 'operation:' + op.id);
 
+  // Crear el hilo de chat inmediatamente. Así "Negociar" también aparece en Mensajes
+  // aunque todavía no se haya enviado una propuesta.
+  getSB().from('messages').insert(buildChatRow(op.car_id, op.buyer_id, op.seller_id, 'text', {
+    to_user: op.seller_id,
+    text: '🤝 Inició una negociación sobre este vehículo.',
+    operation_id: op.id
+  })).then(function(res) {
+    if (res && res.error) console.error('No se pudo crear el hilo de chat:', res.error);
+    loadMessagesPage();
+  });
+
   // Avisar al vendedor aunque no esté dentro de la negociación.
   sendRemoteNegotiationEvent('negotiation_started', op, op.seller_id).then(function(res) {
     if (res && res.error) console.error('No se pudo notificar el inicio de negociación:', res.error);
@@ -4950,6 +4961,20 @@ function acceptProposal() {
   });
   activeOperation.updated_at = new Date().toISOString();
   updateOperation(activeOperation);
+
+  var recipientId = activeOperation.buyer_id === currentUser.id
+    ? activeOperation.seller_id : activeOperation.buyer_id;
+  getSB().from('messages').insert(buildChatRow(activeOperation.car_id,
+    activeOperation.buyer_id, activeOperation.seller_id, 'text', {
+      to_user: recipientId,
+      text: '✅ Precio acordado: ' + fmtPrice(last.price) + '.',
+      operation_id: activeOperation.id
+    })).then(function(res) {
+      if (res && res.error) console.error('No se pudo registrar la aceptación en el chat:', res.error);
+      loadMessagesPage();
+    });
+  sendRemoteNegotiationEvent('proposal_accepted', activeOperation, recipientId);
+
   openNegotiationModal(activeOperation);
   toast('✅ ¡Precio acordado! Podés proceder con la reserva.', 'success');
   addNotification('✅', 'Precio acordado', activeOperation.car_name + ' — ' + fmtPrice(last.price), 'green', null);
@@ -5099,6 +5124,8 @@ function syncRemoteNegotiations() {
           addNotification(title.split(' ')[0], title.substring(title.indexOf(' ') + 1), carLabel + ' · ' + fmtPrice(shownPrice), 'green', action);
         } else if (payload.event === 'negotiation_started') {
           addNotification('🤝', 'Nueva negociación', carLabel, 'green', action);
+        } else if (payload.event === 'proposal_accepted') {
+          addNotification('✅', 'Propuesta aceptada', carLabel, 'green', action);
         }
 
         processed[row.id] = true;
