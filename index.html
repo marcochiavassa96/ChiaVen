@@ -1707,6 +1707,90 @@ var currentChatCarId = null;
 // Supabase "messages" keeps the existing schema. Each conversation is uniquely
 // identified by vehicle + buyer + seller, and the ID is embedded in new messages.
 var CHAT_PREFIX = '[CHIAVEN_CHAT]';
+var CHAT_ARCHIVE_PREFIX = '[CHIAVEN_CHAT_ARCHIVE]';
+
+function encodeChatArchive(car) {
+  return CHAT_ARCHIVE_PREFIX + JSON.stringify({
+    car_id: car.id,
+    car_name: ((car.marca || '') + ' ' + (car.modelo || '') + ' ' + (car.anio || '')).trim(),
+    precio: car.precio || 0,
+    car_img: (Array.isArray(car.images) && car.images.length) ? car.images[0] : (car.image_url || null),
+    archived_at: new Date().toISOString()
+  });
+}
+
+function decodeChatArchive(raw) {
+  if (!raw || raw.indexOf(CHAT_ARCHIVE_PREFIX) !== 0) return null;
+  try { return JSON.parse(raw.slice(CHAT_ARCHIVE_PREFIX.length)); } catch(e) { return null; }
+}
+
+function getArchivedCar(carId) {
+  try {
+    var all = JSON.parse(localStorage.getItem('chiaven_archived_cars') || '{}');
+    return all[carId] || null;
+  } catch(e) { return null; }
+}
+
+function saveArchivedCar(car) {
+  if (!car || !car.id) return;
+  try {
+    var all = JSON.parse(localStorage.getItem('chiaven_archived_cars') || '{}');
+    all[car.id] = {
+      id: car.id,
+      marca: car.marca || '',
+      modelo: car.modelo || '',
+      anio: car.anio || '',
+      precio: car.precio || 0,
+      image_url: car.image_url || null,
+      images: Array.isArray(car.images) ? car.images.slice(0,1) : []
+    };
+    localStorage.setItem('chiaven_archived_cars', JSON.stringify(all));
+  } catch(e) {}
+}
+
+function archiveCarChats(car, callback) {
+  if (!currentUser || !car || !car.id) { if (callback) callback(); return; }
+  getSB().from('messages').select('*').eq('car_id', car.id).then(function(r) {
+    if (r && r.error) {
+      console.error('No se pudieron leer chats para archivar:', r.error);
+      if (callback) callback();
+      return;
+    }
+    var rows = r.data || [];
+    var participants = {};
+    rows.forEach(function(m) {
+      if ((m.message || '').indexOf(REMOTE_EVENT_PREFIX) === 0 || (m.message || '').indexOf(CHAT_ARCHIVE_PREFIX) === 0) return;
+      if ((m.message || '').indexOf(CHAT_ARCHIVE_PREFIX) === 0) return;
+      if (m.from_user && m.from_user !== currentUser.id) participants[m.from_user] = true;
+      if (m.to_user && m.to_user !== currentUser.id) participants[m.to_user] = true;
+    });
+
+    var ids = Object.keys(participants);
+    if (!ids.length) { saveArchivedCar(car); if (callback) callback(); return; }
+
+    var pending = ids.length;
+    ids.forEach(function(otherId) {
+      getSB().from('messages').insert({
+        from_user: currentUser.id,
+        to_user: otherId,
+        car_id: car.id,
+        message: encodeChatArchive(car)
+      }).then(function(res) {
+        if (res && res.error) console.error('No se pudo archivar hilo:', res.error);
+        pending--;
+        if (!pending) {
+          saveArchivedCar(car);
+          if (callback) callback();
+        }
+      });
+    });
+  }).catch(function(e) {
+    console.error('Error archivando chats:', e);
+    if (callback) callback();
+  });
+}
+
+
 
 function getChatThreadId(carId, buyerId, sellerId) {
   var users = [String(buyerId || ''), String(sellerId || '')].sort();
@@ -1796,7 +1880,7 @@ function syncCardChatFromRemote(carId, callback) {
       var bots = (chatSessions[carId] || []).filter(function(m) { return m.role === 'bot'; });
       var remote = rows.map(function(m) {
         var decoded = decodeChatMessage(m.message || '');
-        if ((m.message || '').indexOf(REMOTE_EVENT_PREFIX) === 0) return null;
+        if ((m.message || '').indexOf(REMOTE_EVENT_PREFIX) === 0 || (m.message || '').indexOf(CHAT_ARCHIVE_PREFIX) === 0) return null;
         if (decoded.type === 'proposal' && decoded.proposal) {
           var p = decoded.proposal;
           return {
@@ -2163,7 +2247,7 @@ function loadMessagesPage() {
       var convMap = {};
       allMsgs.forEach(function(m) {
         if (!m.car_id) return;
-        var car = carMap[m.car_id] || carCache[m.car_id] || null;
+        var car = carMap[m.car_id] || carCache[m.car_id] || getArchivedCar(m.car_id) || null;
         var otherId = null;
 
         if (car && car.owner_id) {
@@ -2201,7 +2285,7 @@ function loadMessagesPage() {
       }
 
       listEl.innerHTML = convs.map(function(cv) {
-        var car = carMap[cv.carId] || carCache[cv.carId] || {};
+        var car = carMap[cv.carId] || carCache[cv.carId] || getArchivedCar(cv.carId) || {};
         var isSeller = car.owner_id ? car.owner_id === uid : false;
         var chatBuyerId = isSeller ? cv.otherId : uid;
         var imgs = Array.isArray(car.images) && car.images.length ? car.images : (car.image_url ? [car.image_url] : []);
@@ -2750,7 +2834,7 @@ function carCardHTML(car, isMine, matchPct) {
   var imgCnt = imgs.length > 1 ? '<div class="img-counter">📷 ' + imgs.length + '</div>' : '';
   var locationStr = car.localidad ? '<div class="car-location">📍 ' + esc(car.localidad) + (car.provincia ? ', ' + esc(car.provincia) : '') + '</div>' : '';
   var matchHTML = matchPct != null ? '<div class="match-pill ' + matchClass(matchPct) + '">🎯 Match ' + matchPct + '%</div><div class="match-bar-wrap"><div class="match-bar" style="width:' + matchPct + '%;background:' + matchColor(matchPct) + '"></div></div>' : '';
-  var actions = isMine ? '<div class="car-actions"><button type="button" class="btn-sm" onclick="openEditCar(event,\'' + car.id + '\')">&#9999;&#65039; Editar</button><button type="button" class="btn-sm danger" onclick="deleteCar(\'' + car.id + '\',event)">Eliminar</button><button type="button" class="btn-sm primary" onclick="event.stopPropagation();openCarSellerChats(\'' + car.id + '\')">&#128172; Consultas</button></div>' : '';
+  var actions = isMine ? '<div class="car-actions"><button type="button" class="btn-sm" onclick="openEditCar(event,\'' + car.id + '\')">&#9999;&#65039; Editar</button><button type="button" class="btn-sm primary" onclick="event.stopPropagation();openCarProposals(\'' + car.id + '\')">💰 Propuestas</button><button type="button" class="btn-sm" onclick="event.stopPropagation();openCarSellerChats(\'' + car.id + '\')">&#128172; Consultas</button><button type="button" class="btn-sm" onclick="markCarSold(\'' + car.id + '\',event)" style="color:var(--green)">✓ Vendido</button><button type="button" class="btn-sm danger" onclick="deleteCar(\'' + car.id + '\',event)">Eliminar</button></div>' : '';
   var precioInfoHTML = car.precio_info ? '<div class="car-price-info">' + (isMine ? '' : '<span style="color:var(--text3)">Precio de info:</span> ') + esc(car.precio_info) + '</div>' : '';
   var cardClass = 'car-card' + (isDestacat ? ' destacado' : isSuperOport ? ' super-oportunidad' : isOport ? ' oportunidad' : isNuevo ? ' nuevo' : '');
 
@@ -2795,7 +2879,7 @@ function openCarDetailById(event, carId) {
   document.getElementById('detail-price').textContent = fmtPrice(car.precio);
   document.getElementById('detail-price-info').innerHTML = car.precio_info ? '<span style="color:var(--text3)">Precio de info:</span> ' + esc(car.precio_info) : '';
   document.getElementById('detail-location').textContent = car.localidad ? '📍 ' + esc(car.localidad) + (car.provincia ? ', ' + esc(car.provincia) : '') : '';
-  document.getElementById('detail-actions').innerHTML = isMine ? '<div style="display:flex;gap:8px;margin-bottom:12px"><button type="button" class="btn-sm" onclick="openEditCar(event,\'' + car.id + '\')">✏️ Editar</button><button type="button" class="btn-sm danger" onclick="deleteCarFromDetail(\'' + car.id + '\')">🗑️ Eliminar</button></div>' : '';
+  document.getElementById('detail-actions').innerHTML = isMine ? '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap"><button type="button" class="btn-sm" onclick="openEditCar(event,\'' + car.id + '\')">✏️ Editar</button><button type="button" class="btn-sm primary" onclick="closeCarDetail();openCarProposals(\'' + car.id + '\')">💰 Propuestas</button><button type="button" class="btn-sm" onclick="markCarSold(\'' + car.id + '\',event)" style="color:var(--green)">✓ Vendido</button><button type="button" class="btn-sm danger" onclick="deleteCarFromDetail(\'' + car.id + '\')">🗑️ Eliminar</button></div>' : '';
   renderDetailContact(car, isMine);
   document.getElementById('car-detail-modal').classList.remove('hidden');
 }
@@ -2866,10 +2950,48 @@ function renderDetailContact(car, isMine) {
 function closeCarDetail() { document.getElementById('car-detail-modal').classList.add('hidden'); detailCar = null; }
 
 function deleteCarFromDetail(id) {
-  if (!confirm('¿Eliminar este vehículo?')) return;
-  getSB().from('cars').delete().eq('id', id).eq('owner_id', currentUser.id).then(function() {
-    toast('Vehículo eliminado', 'success');
+  if (!confirm('¿Eliminar este vehículo? Los chats y propuestas también se eliminarán. Si se vendió, usá “Marcar vendido”.')) return;
+  deleteCarData(id, false, function() {
+    toast('Vehículo eliminado y chats eliminados', 'success');
     closeCarDetail();
+    loadMyCars(); loadHomeData();
+  });
+}
+
+function deleteCarData(id, sold, callback) {
+  var car = carCache[id];
+  if (!car) { if (callback) callback(); return; }
+  if (sold) {
+    // Conservamos mensajes/propuestas en Supabase y guardamos una ficha local del vehículo.
+    archiveCarChats(car, function() {
+      getSB().from('cars').delete().eq('id', id).eq('owner_id', currentUser.id).then(function(res) {
+        if (res && res.error) { toast('No se pudo marcar como vendido', 'error'); return; }
+        if (callback) callback();
+      });
+    });
+  } else {
+    // Eliminación real: borrar también todos los hilos del vehículo.
+    getSB().from('messages').delete().eq('car_id', id).then(function() {
+      getSB().from('cars').delete().eq('id', id).eq('owner_id', currentUser.id).then(function(res) {
+        if (res && res.error) { toast('No se pudo eliminar el vehículo', 'error'); return; }
+        try {
+          var archived = JSON.parse(localStorage.getItem('chiaven_archived_cars') || '{}');
+          delete archived[id];
+          localStorage.setItem('chiaven_archived_cars', JSON.stringify(archived));
+        } catch(e) {}
+        if (callback) callback();
+      });
+    });
+  }
+}
+
+function markCarSold(id, event) {
+  if (event) event.stopPropagation();
+  var car = carCache[id];
+  if (!car) return;
+  if (!confirm('¿Marcar este vehículo como VENDIDO? Se eliminará de la red pero se conservarán chats y propuestas como historial.')) return;
+  deleteCarData(id, true, function() {
+    toast('✓ Vendido. Chats y propuestas conservados como historial.', 'success');
     loadMyCars(); loadHomeData();
   });
 }
@@ -3011,9 +3133,9 @@ function loadMyCars() {
 
 function deleteCar(id, event) {
   if (event) event.stopPropagation();
-  if (!confirm('¿Eliminar este vehículo?')) return;
-  getSB().from('cars').delete().eq('id', id).eq('owner_id', currentUser.id).then(function() {
-    toast('Vehículo eliminado', 'success');
+  if (!confirm('¿Eliminar este vehículo? Los chats y propuestas también se eliminarán. Si se vendió, usá “Vendido”.')) return;
+  deleteCarData(id, false, function() {
+    toast('Vehículo eliminado y chats eliminados', 'success');
     loadMyCars(); loadHomeData();
   });
 }
