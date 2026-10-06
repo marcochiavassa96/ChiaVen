@@ -1703,6 +1703,70 @@ var activeMsgBuyerId = null;
 var msgPollInterval = null;
 var currentChatCarId = null;
 
+// ══ UNIFIED CHAT THREADS ══
+// Supabase "messages" keeps the existing schema. Each conversation is uniquely
+// identified by vehicle + buyer + seller, and the ID is embedded in new messages.
+var CHAT_PREFIX = '[CHIAVEN_CHAT]';
+
+function getChatThreadId(carId, buyerId, sellerId) {
+  var users = [String(buyerId || ''), String(sellerId || '')].sort();
+  return String(carId || '') + '::' + users[0] + '::' + users[1];
+}
+
+function getUserAlias(userId) {
+  var raw = String(userId || '');
+  var hash = 0;
+  for (var i = 0; i < raw.length; i++) hash = ((hash << 5) - hash) + raw.charCodeAt(i) | 0;
+  return 'Usuario #' + String(Math.abs(hash) % 10000).padStart(4, '0');
+}
+
+function encodeChatMessage(type, payload) {
+  return CHAT_PREFIX + JSON.stringify({
+    type: type || 'text',
+    thread_id: payload.thread_id || '',
+    text: payload.text || '',
+    operation_id: payload.operation_id || null,
+    proposal: payload.proposal || null,
+    ts: payload.ts || new Date().toISOString()
+  });
+}
+
+function decodeChatMessage(raw) {
+  raw = raw || '';
+  if (raw.indexOf(CHAT_PREFIX) !== 0) {
+    return { type:'text', text:raw, thread_id:null, operation_id:null, proposal:null };
+  }
+  try {
+    return JSON.parse(raw.slice(CHAT_PREFIX.length));
+  } catch (e) {
+    return { type:'text', text:raw, thread_id:null, operation_id:null, proposal:null };
+  }
+}
+
+function chatMessageText(raw) {
+  var d = decodeChatMessage(raw);
+  if (d.type === 'proposal' && d.proposal) {
+    var p = d.proposal;
+    return '💰 Propuesta: ' + fmtPrice(p.buyerPrice || p.finalPrice || p.price || 0) + (p.note ? ' · ' + p.note : '');
+  }
+  return d.text || '';
+}
+
+function buildChatRow(carId, buyerId, sellerId, type, payload) {
+  return {
+    from_user: currentUser.id,
+    to_user: payload.to_user,
+    car_id: carId,
+    message: encodeChatMessage(type, {
+      thread_id: getChatThreadId(carId, buyerId, sellerId),
+      text: payload.text || '',
+      operation_id: payload.operation_id || null,
+      proposal: payload.proposal || null,
+      ts: payload.ts || new Date().toISOString()
+    })
+  };
+}
+
 function syncCardChatFromRemote(carId, callback) {
   if (!currentUser || !carId) { if (callback) callback(); return; }
   var car = carCache[carId];
@@ -1722,28 +1786,29 @@ function syncCardChatFromRemote(carId, callback) {
                (m.to_user === currentUser.id && m.from_user === car.owner_id);
       });
 
-      var bots = (chatSessions[carId] || []).filter(function(m) {
-        return m.role === 'bot';
-      });
-
+      var bots = (chatSessions[carId] || []).filter(function(m) { return m.role === 'bot'; });
       var remote = rows.map(function(m) {
+        var decoded = decodeChatMessage(m.message || '');
+        if ((m.message || '').indexOf(REMOTE_EVENT_PREFIX) === 0) return null;
+        if (decoded.type === 'proposal' && decoded.proposal) {
+          var p = decoded.proposal;
+          return {
+            role: m.from_user === currentUser.id ? 'sent' : 'received',
+            text: '💰 Propuesta: ' + fmtPrice(p.buyerPrice || p.finalPrice || p.price || 0) + (p.note ? ' · ' + esc(p.note) : ''),
+            ts: m.created_at || decoded.ts,
+            remote_id: m.id,
+            thread_id: decoded.thread_id,
+            kind: 'proposal'
+          };
+        }
         return {
           role: m.from_user === currentUser.id ? 'sent' : 'received',
-          text: m.message || '',
-          ts: m.created_at || new Date().toISOString(),
-          remote_id: m.id
+          text: decoded.text || '',
+          ts: m.created_at || decoded.ts,
+          remote_id: m.id,
+          thread_id: decoded.thread_id
         };
-      });
-
-      // La tarjeta y la pestaña Mensajes comparten ahora la misma conversación.
-      // Conservamos únicamente las respuestas del asistente local y usamos
-      // Supabase como fuente de verdad para los mensajes entre agencias.
-      remote.forEach(function(m) {
-        if (m.text.indexOf(REMOTE_EVENT_PREFIX) === 0) return;
-      });
-      remote = remote.filter(function(m) {
-        return m.text.indexOf(REMOTE_EVENT_PREFIX) !== 0;
-      });
+      }).filter(Boolean);
 
       chatSessions[carId] = bots.concat(remote);
       chatSessions[carId].sort(function(a,b) {
@@ -1759,6 +1824,7 @@ function syncCardChatFromRemote(carId, callback) {
       if (callback) callback();
     });
 }
+
 
 function openCarChat(carId) {
   if (!currentUser) { showAuth(); return; }
@@ -1783,8 +1849,10 @@ function openCarChat(carId) {
     return;
   }
 
-  // IMPORTANTE: "Solo chatear" abre el chat sobre la tarjeta.
-  // No navega a la pestaña Mensajes. El envío se sincroniza con Supabase.
+  // "Solo chatear" abre el mismo hilo que aparece en Mensajes.
+  // Cerramos el detalle primero para que el modal nunca quede por detrás.
+  var detailModal = document.getElementById('car-detail-modal');
+  if (detailModal) detailModal.classList.add('hidden');
   var modal = document.getElementById('chat-modal');
   if (!modal) {
     toast('No se pudo abrir el chat', 'error');
@@ -1834,7 +1902,7 @@ function openCarChat(carId) {
 
   renderChatMessages();
   modal.classList.remove('hidden');
-  modal.style.zIndex = '9100';
+  modal.style.zIndex = '9600';
 
   // Enviar también mensajes rápidos desde la tarjeta al vendedor.
   var input = document.getElementById('chat-input');
@@ -1884,7 +1952,7 @@ function openMsgChat(carId, buyerId) {
         '<div style="flex:1"><div style="font-weight:600;font-size:0.9rem">' +
           esc((car.marca || '') + ' ' + (car.modelo || '') + ' ' + (car.anio || '')) +
         '</div><div style="font-size:0.72rem;color:var(--text3)">' +
-          (isSeller ? 'Consulta de comprador' : 'Tu consulta') +
+          (isSeller ? ('Consulta de comprador · ' + getUserAlias(buyerId)) : 'Tu consulta') +
         '</div></div>' +
         '<strong style="color:var(--accent)">' + fmtPrice(car.precio) + '</strong>';
     }
@@ -1937,20 +2005,35 @@ function _renderMsgs(msgs) {
   }
   var wasAtBottom = el.scrollHeight - el.scrollTop <= el.clientHeight + 40;
   el.innerHTML = msgs.map(function(m) {
+    var decoded = decodeChatMessage(m.message || '');
     var isMe = m.from_user === currentUser.id;
     var isBot = (m.message||'').indexOf('[BOT] ') === 0;
-    var text = (m.message||'').replace('[BOT] ', '');
     var time = m.created_at ? new Date(m.created_at).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}) : '';
+
     if (isBot) return '<div style="align-self:flex-start;max-width:82%">' +
       '<div style="font-size:0.65rem;color:var(--accent);font-weight:600;margin-bottom:3px">Asistente Chiaven</div>' +
-      '<div style="background:#fff;border:1px solid var(--border);border-radius:12px 12px 12px 4px;padding:10px 14px;font-size:0.84rem;color:var(--text2)">' + text + '</div>' +
+      '<div style="background:#fff;border:1px solid var(--border);border-radius:12px 12px 12px 4px;padding:10px 14px;font-size:0.84rem;color:var(--text2)">' + esc((m.message||'').replace('[BOT] ','')) + '</div>' +
       '<div style="font-size:0.65rem;color:var(--text3);margin-top:3px">' + time + '</div></div>';
+
+    if (decoded.type === 'proposal' && decoded.proposal) {
+      var p = decoded.proposal;
+      var shown = p.buyerPrice || p.finalPrice || p.price || 0;
+      var note = p.note ? '<div style="font-size:0.76rem;margin-top:6px;opacity:.8">' + esc(p.note) + '</div>' : '';
+      return '<div style="display:flex;flex-direction:column;' + (isMe?'align-items:flex-end;align-self:flex-end':'align-items:flex-start;align-self:flex-start') + ';max-width:82%">' +
+        '<div style="background:' + (isMe?'var(--accent-light)':'#fff') + ';border:1px solid ' + (isMe?'var(--accent)':'var(--border)') + ';border-radius:12px;padding:12px 14px;min-width:210px">' +
+        '<div style="font-size:0.68rem;color:var(--text3);font-weight:600;margin-bottom:4px">' + (isMe?'Tu propuesta':'Propuesta recibida') + '</div>' +
+        '<div style="font-size:1.05rem;font-weight:700;color:var(--accent)">💰 ' + fmtPrice(shown) + '</div>' + note +
+        '</div><div style="font-size:0.65rem;color:var(--text3);margin-top:3px">' + time + '</div></div>';
+    }
+
+    var text = decoded.text || '';
     return '<div style="display:flex;flex-direction:column;' + (isMe?'align-items:flex-end;align-self:flex-end':'align-items:flex-start;align-self:flex-start') + ';max-width:78%">' +
       '<div style="background:' + (isMe?'var(--accent)':'#fff') + ';color:' + (isMe?'#fff':'var(--text)') + ';border:1px solid var(--border);border-radius:' + (isMe?'12px 12px 4px 12px':'12px 12px 12px 4px') + ';padding:10px 14px;font-size:0.85rem">' + esc(text) + '</div>' +
       '<div style="font-size:0.65rem;color:var(--text3);margin-top:3px">' + time + '</div></div>';
   }).join('');
   if (wasAtBottom) el.scrollTop = el.scrollHeight;
 }
+
 
 function sendActiveMessage() {
   var input = document.getElementById('active-chat-input');
@@ -1965,10 +2048,10 @@ function sendActiveMessage() {
       toast('No se pudo determinar el destinatario', 'error');
       return;
     }
-    getSB().from('messages').insert({
-      from_user: currentUser.id, to_user: toUser,
-      car_id: activeMsgCarId, message: text
-    }).then(function(res) {
+    getSB().from('messages').insert(buildChatRow(activeMsgCarId,
+      isSeller ? activeMsgBuyerId : currentUser.id,
+      isSeller ? currentUser.id : toUser,
+      'text', { to_user: toUser, text: text })).then(function(res) {
       if (res && res.error) {
         console.error('Chat error:', res.error);
         toast('Error al enviar', 'error');
@@ -2062,11 +2145,17 @@ function loadMessagesPage() {
 
         if (!otherId || otherId === uid) return;
 
-        var key = m.car_id + '|' + otherId;
+        var buyerId = (car && car.owner_id === uid) ? otherId : uid;
+        var sellerId = (car && car.owner_id) ? car.owner_id : (m.from_user === uid ? m.to_user : m.from_user);
+        var threadId = getChatThreadId(m.car_id, buyerId, sellerId);
+        var key = threadId;
         if (!convMap[key] || new Date(m.created_at || 0) > new Date(convMap[key].ts || 0)) {
           convMap[key] = {
             carId: m.car_id,
             otherId: otherId,
+            buyerId: buyerId,
+            sellerId: sellerId,
+            threadId: threadId,
             lastMsg: m.message || '',
             ts: m.created_at || ''
           };
@@ -2091,7 +2180,7 @@ function loadMessagesPage() {
           ? '<img src="' + esc(imgs[0]) + '" style="width:100%;height:100%;object-fit:cover">'
           : '&#128663;';
         var title = (car.marca || 'Auto') + ' ' + (car.modelo || '') + (car.anio ? ' ' + car.anio : '');
-        var lastText = (cv.lastMsg || '').replace('[BOT] ', '').substring(0, 45);
+        var lastText = chatMessageText(cv.lastMsg || '').replace('[BOT] ', '').substring(0, 45);
         var time = cv.ts ? new Date(cv.ts).toLocaleTimeString('es-AR', {hour:'2-digit', minute:'2-digit'}) : '';
         var isActive = cv.carId === activeMsgCarId && chatBuyerId === activeMsgBuyerId;
 
@@ -2101,7 +2190,7 @@ function loadMessagesPage() {
           '<div style="width:44px;height:36px;border-radius:8px;overflow:hidden;background:var(--bg);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:18px">' + thumb + '</div>' +
           '<div style="flex:1;min-width:0">' +
             '<div style="font-size:0.82rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(title) + '</div>' +
-            '<div style="font-size:0.7rem;color:var(--text3)">' + (isSeller ? 'Vendiendo' : 'Comprando') + '</div>' +
+            '<div style="font-size:0.7rem;color:var(--text3)">' + (isSeller ? ('Vendiendo · ' + getUserAlias(cv.otherId)) : 'Comprando') + '</div>' +
             '<div style="font-size:0.74rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(lastText) + '</div>' +
           '</div>' +
           '<div style="font-size:0.65rem;color:var(--text3);flex-shrink:0">' + time + '</div>' +
@@ -3986,12 +4075,10 @@ function sendChatMessage() {
 
   // El chat de la tarjeta ahora usa el mismo canal remoto que "Mensajes".
   if (currentUser && car && car.owner_id && car.owner_id !== currentUser.id) {
-    getSB().from('messages').insert({
-      from_user: currentUser.id,
+    getSB().from('messages').insert(buildChatRow(carId, currentUser.id, car.owner_id, 'text', {
       to_user: car.owner_id,
-      car_id: carId,
-      message: text
-    }).then(function(res) {
+      text: text
+    })).then(function(res) {
       if (res && res.error) {
         console.error('Error enviando mensaje desde tarjeta:', res.error);
         toast('No se pudo enviar el mensaje a la agencia', 'error');
@@ -4787,6 +4874,21 @@ function sendProposal() {
   var recipientId = activeOperation.buyer_id === currentUser.id
     ? activeOperation.seller_id
     : activeOperation.buyer_id;
+  getSB().from('messages').insert(buildChatRow(activeOperation.car_id,
+    activeOperation.buyer_id, activeOperation.seller_id, 'proposal', {
+      to_user: recipientId,
+      operation_id: activeOperation.id,
+      proposal: {
+        price: sellerReceives,
+        buyerPrice: buyerPrice,
+        commission: commission,
+        finalPrice: buyerPrice,
+        note: note
+      }
+    })).then(function(chatRes) {
+      if (chatRes && chatRes.error) console.error('Error guardando propuesta en chat:', chatRes.error);
+    });
+
   sendRemoteNegotiationEvent('proposal', activeOperation, recipientId).then(function(res) {
     if (res && res.error) {
       toast('La propuesta quedó guardada, pero no se pudo notificar al otro usuario', 'error');
@@ -4827,8 +4929,12 @@ function acceptProposal() {
 function sendNegMessage() {
   var input = document.getElementById('neg-msg-input');
   var text = (input ? input.value : '').trim();
-  if (!text || !activeOperation) return;
+  if (!text || !activeOperation || !currentUser) return;
   input.value = '';
+
+  var recipientId = activeOperation.buyer_id === currentUser.id
+    ? activeOperation.seller_id : activeOperation.buyer_id;
+
   activeOperation.messages = activeOperation.messages || [];
   activeOperation.messages.push({
     type: 'message',
@@ -4839,6 +4945,18 @@ function sendNegMessage() {
   activeOperation.updated_at = new Date().toISOString();
   updateOperation(activeOperation);
   openNegotiationModal(activeOperation);
+
+  getSB().from('messages').insert(buildChatRow(activeOperation.car_id,
+    activeOperation.buyer_id, activeOperation.seller_id, 'text', {
+      to_user: recipientId,
+      text: text
+    })).then(function(res) {
+      if (res && res.error) {
+        console.error('Error guardando mensaje de negociación:', res.error);
+        toast('No se pudo enviar el mensaje', 'error');
+      }
+      loadMessagesPage();
+    });
 }
 
 function updateOperation(op) {
