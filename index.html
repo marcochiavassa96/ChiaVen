@@ -1121,8 +1121,14 @@ button,a,.nav-item,.bn-item,.car-card,.plan-card,.pay-method,.quick-action{touch
 <div id="app-screen">
   <div id="sidebar">
     <div class="sidebar-logo">
-      <div class="sidebar-logo-icon">R</div>
-      <div class="sidebar-logo-text">Re<span style="color:var(--accent2)">Cars</span></div>
+      <div class="sidebar-logo-icon" style="background:transparent;width:32px;height:32px">
+        <svg viewBox="0 0 32 32" width="32" height="32" aria-label="CHIAVEN">
+          <path d="M5 8.5L11.5 4H27L20.5 8.5H12.8L9.2 11v10l3.6 2.5h7.7L27 28H11.5L5 23.5z" fill="#1677FF"/>
+          <path d="M11.5 4L18 8.5 12.8 11 9.2 11zM20.5 8.5L27 4v8.5L20.5 17zM12.8 21L20.5 17 27 20.5 20.5 28z" fill="#111827"/>
+        </svg>
+      </div>
+      <div class="sidebar-logo-text">CHIA<span style="color:var(--accent2)">VEN</span></div>
+    </div>
     </div>
     <div class="sidebar-nav">
       <div class="nav-section-label">Principal</div>
@@ -1910,13 +1916,19 @@ function openMsgChat(carId, buyerId) {
   });
 }
 function _loadAndRenderMsgs(carId, buyerId) {
-  // RLS ensures user only gets messages they're part of
-  // Just filter by car_id - no user filter needed
+  if (!currentUser || !carId || !buyerId) return;
   getSB().from('messages').select('*').eq('car_id', carId)
     .order('created_at', { ascending: true })
     .then(function(r) {
+      if (r && r.error) {
+        console.error('Error cargando conversación:', r.error);
+        _renderMsgs([]);
+        return;
+      }
       var rows = (r.data || []).filter(function(m) {
-        return (m.message || '').indexOf(REMOTE_EVENT_PREFIX) !== 0;
+        if ((m.message || '').indexOf(REMOTE_EVENT_PREFIX) === 0) return false;
+        return (m.from_user === currentUser.id && m.to_user === buyerId) ||
+               (m.to_user === currentUser.id && m.from_user === buyerId);
       });
       _renderMsgs(rows);
     });
@@ -2045,12 +2057,16 @@ function loadMessagesPage() {
       var convMap = {};
       allMsgs.forEach(function(m) {
         if (!m.car_id) return;
-        var car = carMap[m.car_id];
-        if (!car) return;
+        var car = carMap[m.car_id] || carCache[m.car_id] || null;
+        var otherId = null;
 
-        var isSeller = car.owner_id === uid;
-        var otherId = isSeller ? m.from_user : car.owner_id;
-        if (!otherId) return;
+        if (car && car.owner_id) {
+          otherId = car.owner_id === uid ? m.from_user : car.owner_id;
+        } else {
+          otherId = m.from_user === uid ? m.to_user : m.from_user;
+        }
+
+        if (!otherId || otherId === uid) return;
 
         var key = m.car_id + '|' + otherId;
         if (!convMap[key] || new Date(m.created_at || 0) > new Date(convMap[key].ts || 0)) {
@@ -2073,8 +2089,8 @@ function loadMessagesPage() {
       }
 
       listEl.innerHTML = convs.map(function(cv) {
-        var car = carMap[cv.carId] || {};
-        var isSeller = car.owner_id === uid;
+        var car = carMap[cv.carId] || carCache[cv.carId] || {};
+        var isSeller = car.owner_id ? car.owner_id === uid : false;
         var chatBuyerId = isSeller ? cv.otherId : uid;
         var imgs = Array.isArray(car.images) && car.images.length ? car.images : (car.image_url ? [car.image_url] : []);
         var thumb = imgs.length
