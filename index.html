@@ -2247,7 +2247,7 @@ function loadMessagesPage() {
       var convMap = {};
       allMsgs.forEach(function(m) {
         if (!m.car_id) return;
-        var car = carMap[m.car_id] || carCache[m.car_id] || getArchivedCar(m.car_id) || null;
+        var car = carMap[m.car_id] || carCache[m.car_id] || archivedMap[m.car_id] || getArchivedCar(m.car_id) || null;
         var otherId = null;
 
         if (car && car.owner_id) {
@@ -2285,7 +2285,7 @@ function loadMessagesPage() {
       }
 
       listEl.innerHTML = convs.map(function(cv) {
-        var car = carMap[cv.carId] || carCache[cv.carId] || getArchivedCar(cv.carId) || {};
+        var car = carMap[cv.carId] || carCache[cv.carId] || archivedMap[cv.carId] || getArchivedCar(cv.carId) || {};
         var isSeller = car.owner_id ? car.owner_id === uid : false;
         var chatBuyerId = isSeller ? cv.otherId : uid;
         var imgs = Array.isArray(car.images) && car.images.length ? car.images : (car.image_url ? [car.image_url] : []);
