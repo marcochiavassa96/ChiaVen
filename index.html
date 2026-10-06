@@ -1705,38 +1705,79 @@ var currentChatCarId = null;
 
 function openCarChat(carId) {
   if (!currentUser) { showAuth(); return; }
-  currentChatCarId = carId;
+  activeChatCarId = carId;
   var car = carCache[carId];
+
+  // Cargar el vehículo si todavía no está en caché.
   if (!car) {
     getSB().from('cars').select('*').eq('id', carId).then(function(r) {
-      if (r.data && r.data[0]) { carCache[carId] = r.data[0]; openCarChat(carId); }
+      if (r.data && r.data[0]) {
+        carCache[carId] = r.data[0];
+        openCarChat(carId);
+      } else {
+        toast('No se pudo cargar el vehículo', 'error');
+      }
     });
     return;
   }
-  if (car.owner_id === currentUser.id) { toast('Es tu propio vehiculo', 'info'); return; }
-  var buyerId = currentUser.id;
-  var sellerId = car.owner_id;
-  getSB().from('messages').select('id').eq('car_id', carId)
-    .eq('from_user', buyerId)
+
+  if (car.owner_id === currentUser.id) {
+    toast('Es tu propio vehículo', 'info');
+    return;
+  }
+
+  // IMPORTANTE: "Solo chatear" abre el chat sobre la tarjeta.
+  // No navega a la pestaña Mensajes. El envío se sincroniza con Supabase.
+  var modal = document.getElementById('chat-modal');
+  if (!modal) {
+    toast('No se pudo abrir el chat', 'error');
+    return;
+  }
+
+  var title = document.getElementById('chat-car-title');
+  var price = document.getElementById('chat-car-price');
+  var img = document.getElementById('chat-car-img');
+  if (title) title.textContent = (car.marca || '') + ' ' + (car.modelo || '') + ' ' + (car.anio || '');
+  if (price) price.textContent = fmtPrice(car.precio || 0);
+  if (img) {
+    var src = (Array.isArray(car.images) && car.images.length) ? car.images[0] : car.image_url;
+    img.innerHTML = src
+      ? '<img src="' + esc(src) + '" style="width:100%;height:100%;object-fit:cover">'
+      : '🚗';
+  }
+
+  loadChatSessions();
+  if (!chatSessions[carId]) chatSessions[carId] = [];
+
+  // Registrar el inicio de consulta en Supabase, sin duplicarlo.
+  getSB().from('messages').select('id')
+    .eq('car_id', carId)
+    .eq('from_user', currentUser.id)
+    .eq('to_user', car.owner_id)
     .then(function(r) {
       if (!(r.data && r.data.length)) {
-        // Bot welcome: from=buyer, to=seller so seller can see it
-        getSB().from('messages').insert({
-          from_user: buyerId, to_user: sellerId,
+        return getSB().from('messages').insert({
+          from_user: currentUser.id,
+          to_user: car.owner_id,
           car_id: carId,
-          message: '[BOT] Hola! Soy el asistente Chiaven. El comprador abrio una consulta sobre tu ' +
-            (car.marca||'') + ' ' + (car.modelo||'') + '.'
-        }).then(function() {
-          navigate('messages');
-          setTimeout(function() { loadMessagesPage(); openMsgChat(carId, buyerId); }, 400);
+          message: '[BOT] El comprador abrió una consulta sobre este vehículo.'
         });
-      } else {
-        navigate('messages');
-        setTimeout(function() { loadMessagesPage(); openMsgChat(carId, currentUser.id); }, 400);
       }
+    })
+    .catch(function(err) {
+      console.error('Error registrando inicio de chat:', err);
     });
-}
 
+  renderChatMessages();
+  modal.classList.remove('hidden');
+  modal.style.zIndex = '9100';
+
+  // Enviar también mensajes rápidos desde la tarjeta al vendedor.
+  var input = document.getElementById('chat-input');
+  if (input) {
+    setTimeout(function() { input.focus(); }, 100);
+  }
+}
 function openCarSellerChats(carId) {
   navigate('messages');
   setTimeout(function() {
