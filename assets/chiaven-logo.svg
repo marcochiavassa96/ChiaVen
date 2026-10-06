@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 372" role="img" aria-labelledby="title desc">
+<title id="title">CHIAVEN</title><desc id="desc">La red privada de agencias</desc>
+<defs><linearGradient id="blue" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#1456e8"/><stop offset="1" stop-color="#1fa4ff"/></linearGradient></defs>
+<g transform="translate(210 24)">
+<path d="M245 0H125C55 0 0 55 0 126s55 126 125 126h120l-39-55h-78c-39 0-71-32-71-71s32-71 71-71h75z" fill="#0d234d"/>
+<path d="M244 76h72c10 0 19 5 24 14l65 111c8 14-2 31-18 31h-60c-10 0-19-5-24-14L238 107c-8-14 2-31 18-31z" fill="#0d234d"/>
+<path d="M433 0h76l-104 142-43-64z" fill="url(#blue)"/>
+</g>
+<text x="360" y="315" text-anchor="middle" fill="#0d234d" font-family="Montserrat,Inter,Arial,sans-serif" font-size="74" font-weight="700" letter-spacing="10">CHIAVEN</text>
+<text x="360" y="356" text-anchor="middle" fill="#19325d" font-family="Montserrat,Inter,Arial,sans-serif" font-size="14" font-weight="400" letter-spacing="7">LA RED PRIVADA DE AGENCIAS</text>
+</svg>
