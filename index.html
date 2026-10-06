@@ -1720,6 +1720,13 @@ function getUserAlias(userId) {
   return 'Usuario #' + String(Math.abs(hash) % 10000).padStart(4, '0');
 }
 
+function getThreadAlias(threadId) {
+  var raw = String(threadId || '');
+  var hash = 0;
+  for (var i = 0; i < raw.length; i++) hash = ((hash << 5) - hash) + raw.charCodeAt(i) | 0;
+  return 'Hilo #' + String(Math.abs(hash) % 1000000).padStart(6, '0');
+}
+
 function encodeChatMessage(type, payload) {
   return CHAT_PREFIX + JSON.stringify({
     type: type || 'text',
@@ -1952,7 +1959,7 @@ function openMsgChat(carId, buyerId) {
         '<div style="flex:1"><div style="font-weight:600;font-size:0.9rem">' +
           esc((car.marca || '') + ' ' + (car.modelo || '') + ' ' + (car.anio || '')) +
         '</div><div style="font-size:0.72rem;color:var(--text3)">' +
-          (isSeller ? ('Consulta de comprador · ' + getUserAlias(buyerId)) : 'Tu consulta') +
+          (isSeller ? ('Consulta de comprador · ' + getUserAlias(buyerId) + ' · ' + getThreadAlias(getChatThreadId(carId, buyerId, car.owner_id))) : ('Tu consulta · ' + getThreadAlias(getChatThreadId(carId, currentUser.id, car.owner_id)))) +
         '</div></div>' +
         '<strong style="color:var(--accent)">' + fmtPrice(car.precio) + '</strong>';
     }
@@ -2023,6 +2030,7 @@ function _renderMsgs(msgs) {
         '<div style="background:' + (isMe?'var(--accent-light)':'#fff') + ';border:1px solid ' + (isMe?'var(--accent)':'var(--border)') + ';border-radius:12px;padding:12px 14px;min-width:210px">' +
         '<div style="font-size:0.68rem;color:var(--text3);font-weight:600;margin-bottom:4px">' + (isMe?'Tu propuesta':'Propuesta recibida') + '</div>' +
         '<div style="font-size:1.05rem;font-weight:700;color:var(--accent)">💰 ' + fmtPrice(shown) + '</div>' + note +
+        (decoded.operation_id ? '<button type="button" onclick="openProposalFromMessage(\'' + esc(decoded.operation_id) + '\')" style="margin-top:9px;padding:6px 10px;border:1px solid var(--accent);border-radius:7px;background:#fff;color:var(--accent);font-size:0.72rem;cursor:pointer">↩ Responder / contraofertar</button>' : '') +
         '</div><div style="font-size:0.65rem;color:var(--text3);margin-top:3px">' + time + '</div></div>';
     }
 
@@ -2034,6 +2042,27 @@ function _renderMsgs(msgs) {
   if (wasAtBottom) el.scrollTop = el.scrollHeight;
 }
 
+
+function openProposalFromMessage(operationId) {
+  if (!operationId) return;
+  var op = getOperations().find(function(o){ return o.id === operationId; });
+  if (op) {
+    activeOperation = op;
+    openNegotiationModal(op);
+    return;
+  }
+  // El evento de negociación puede estar llegando en paralelo al mensaje.
+  syncRemoteNegotiations();
+  setTimeout(function() {
+    var fresh = getOperations().find(function(o){ return o.id === operationId; });
+    if (fresh) {
+      activeOperation = fresh;
+      openNegotiationModal(fresh);
+    } else {
+      toast('La negociación todavía se está sincronizando. Probá nuevamente en unos segundos.', 'info');
+    }
+  }, 700);
+}
 
 function sendActiveMessage() {
   var input = document.getElementById('active-chat-input');
@@ -2190,7 +2219,7 @@ function loadMessagesPage() {
           '<div style="width:44px;height:36px;border-radius:8px;overflow:hidden;background:var(--bg);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:18px">' + thumb + '</div>' +
           '<div style="flex:1;min-width:0">' +
             '<div style="font-size:0.82rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(title) + '</div>' +
-            '<div style="font-size:0.7rem;color:var(--text3)">' + (isSeller ? ('Vendiendo · ' + getUserAlias(cv.otherId)) : 'Comprando') + '</div>' +
+            '<div style="font-size:0.7rem;color:var(--text3)">' + (isSeller ? ('Vendiendo · ' + getUserAlias(cv.otherId) + ' · ' + getThreadAlias(cv.threadId)) : ('Comprando · ' + getThreadAlias(cv.threadId))) + '</div>' +
             '<div style="font-size:0.74rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(lastText) + '</div>' +
           '</div>' +
           '<div style="font-size:0.65rem;color:var(--text3);flex-shrink:0">' + time + '</div>' +
