@@ -2219,10 +2219,17 @@ function loadMessagesPage() {
       return;
     }
 
+    var allRawMsgs = (pr[0].data || []).concat(pr[1].data || []);
+    var archivedMap = {};
+    allRawMsgs.forEach(function(m) {
+      var archived = decodeChatArchive(m.message || '');
+      if (archived && archived.car_id) archivedMap[archived.car_id] = archived;
+    });
+
     var allMsgs = [];
     var seen = {};
-    (pr[0].data || []).concat(pr[1].data || []).forEach(function(m) {
-      if ((m.message || '').indexOf(REMOTE_EVENT_PREFIX) === 0) return;
+    allRawMsgs.forEach(function(m) {
+      if ((m.message || '').indexOf(REMOTE_EVENT_PREFIX) === 0 || (m.message || '').indexOf(CHAT_ARCHIVE_PREFIX) === 0) return;
       if (!seen[m.id]) { seen[m.id] = true; allMsgs.push(m); }
     });
 
