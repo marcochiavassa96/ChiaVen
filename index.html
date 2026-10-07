@@ -1919,86 +1919,55 @@ function syncCardChatFromRemote(carId, callback) {
 
 function openCarChat(carId) {
   if (!currentUser) { showAuth(); return; }
-  activeChatCarId = carId;
   var car = carCache[carId];
 
-  // Cargar el vehículo si todavía no está en caché.
-  if (!car) {
+  function goToMessages(c) {
+    if (!c || !c.owner_id || c.owner_id === currentUser.id) {
+      toast('No se pudo abrir el chat', 'error');
+      return;
+    }
+    var detailModal = document.getElementById('car-detail-modal');
+    if (detailModal) detailModal.classList.add('hidden');
+
+    // Un único chat por vehículo + comprador + agencia.
+    getSB().from('messages').select('id')
+      .eq('car_id', carId)
+      .eq('from_user', currentUser.id)
+      .eq('to_user', c.owner_id)
+      .then(function(r) {
+        var p = Promise.resolve();
+        if (!(r.data && r.data.length)) {
+          p = getSB().from('messages').insert(buildChatRow(carId, currentUser.id, c.owner_id, 'text', {
+            to_user: c.owner_id,
+            text: '👋 Inicié una consulta sobre este vehículo.'
+          }));
+        }
+        return p;
+      })
+      .then(function() {
+        navigate('messages');
+        setTimeout(function() {
+          loadMessagesPage();
+          setTimeout(function() { openMsgChat(carId, currentUser.id); }, 250);
+        }, 250);
+      })
+      .catch(function(err) {
+        console.error('Error abriendo chat:', err);
+        toast('No se pudo abrir la conversación', 'error');
+      });
+  }
+
+  if (car) {
+    goToMessages(car);
+  } else {
     getSB().from('cars').select('*').eq('id', carId).then(function(r) {
       if (r.data && r.data[0]) {
         carCache[carId] = r.data[0];
-        openCarChat(carId);
+        goToMessages(r.data[0]);
       } else {
         toast('No se pudo cargar el vehículo', 'error');
       }
     });
-    return;
-  }
-
-  if (car.owner_id === currentUser.id) {
-    toast('Es tu propio vehículo', 'info');
-    return;
-  }
-
-  // "Solo chatear" abre el mismo hilo que aparece en Mensajes.
-  // Cerramos el detalle primero para que el modal nunca quede por detrás.
-  var detailModal = document.getElementById('car-detail-modal');
-  if (detailModal) detailModal.classList.add('hidden');
-  var modal = document.getElementById('chat-modal');
-  if (!modal) {
-    toast('No se pudo abrir el chat', 'error');
-    return;
-  }
-
-  var title = document.getElementById('chat-car-title');
-  var price = document.getElementById('chat-car-price');
-  var img = document.getElementById('chat-car-img');
-  if (title) title.textContent = (car.marca || '') + ' ' + (car.modelo || '') + ' ' + (car.anio || '');
-  if (price) price.textContent = fmtPrice(car.precio || 0);
-  if (img) {
-    var src = (Array.isArray(car.images) && car.images.length) ? car.images[0] : car.image_url;
-    img.innerHTML = src
-      ? '<img src="' + esc(src) + '" style="width:100%;height:100%;object-fit:cover">'
-      : '🚗';
-  }
-
-  loadChatSessions();
-  if (!chatSessions[carId]) chatSessions[carId] = [];
-
-  // Registrar el inicio de consulta en Supabase, sin duplicarlo.
-  getSB().from('messages').select('id')
-    .eq('car_id', carId)
-    .eq('from_user', currentUser.id)
-    .eq('to_user', car.owner_id)
-    .then(function(r) {
-      if (!(r.data && r.data.length)) {
-        return getSB().from('messages').insert({
-          from_user: currentUser.id,
-          to_user: car.owner_id,
-          car_id: carId,
-          message: '[BOT] El comprador abrió una consulta sobre este vehículo.'
-        });
-      }
-    })
-    .then(function() {
-      // Recuperar lo hablado anteriormente por esta tarjeta.
-      syncCardChatFromRemote(carId, function() {
-        renderChatMessages();
-      });
-    })
-    .catch(function(err) {
-      console.error('Error registrando/sincronizando inicio de chat:', err);
-      syncCardChatFromRemote(carId);
-    });
-
-  renderChatMessages();
-  modal.classList.remove('hidden');
-  modal.style.zIndex = '9600';
-
-  // Enviar también mensajes rápidos desde la tarjeta al vendedor.
-  var input = document.getElementById('chat-input');
-  if (input) {
-    setTimeout(function() { input.focus(); }, 100);
   }
 }
 function openCarSellerChats(carId) {
@@ -2078,10 +2047,25 @@ function _loadAndRenderMsgs(carId, buyerId) {
         _renderMsgs([]);
         return;
       }
+
+      var isSeller = false;
+      var car = carCache[carId];
+      if (car && car.owner_id) isSeller = car.owner_id === currentUser.id;
+
       var rows = (r.data || []).filter(function(m) {
-        if ((m.message || '').indexOf(REMOTE_EVENT_PREFIX) === 0) return false;
-        return (m.from_user === currentUser.id && m.to_user === buyerId) ||
-               (m.to_user === currentUser.id && m.from_user === buyerId);
+        var raw = m.message || '';
+        if (raw.indexOf(REMOTE_EVENT_PREFIX) === 0 || raw.indexOf(CHAT_ARCHIVE_PREFIX) === 0) return false;
+
+        // Chat normal entre comprador y agencia.
+        var pair = (m.from_user === currentUser.id && m.to_user === buyerId) ||
+                   (m.to_user === currentUser.id && m.from_user === buyerId);
+
+        // El asistente responde al propio comprador (from=to). Antes estos mensajes
+        // quedaban afuera y por eso la conversación parecía vacía.
+        var ownBot = !isSeller && m.from_user === currentUser.id && m.to_user === currentUser.id &&
+                     raw.indexOf('[BOT] ') === 0;
+
+        return pair || ownBot;
       });
       _renderMsgs(rows);
     });
@@ -5072,7 +5056,7 @@ function renderNegActions(op, isBuyer, isSeller) {
         '<div style="font-size:0.82rem;color:var(--text2);margin-bottom:12px">' +
           (isSeller ? 'El comprador informó el pago de la seña. Verificá el ingreso y luego confirmá la venta.' : 'La agencia debe verificar la seña y confirmar la operación. Después podrán coordinar documentación, saldo y entrega.') +
         '</div>' +
-        (isSeller ? '<button type="button" class="form-submit" onclick="confirmSale()" style="width:100%">🎉 Confirmar venta y completar operación</button>' : '<button type="button" class="btn-sm primary" onclick="navigate(\'messages\');closeNegotiationModal()" style="width:100%;padding:10px">💬 Contactar / coordinar con la agencia</button>') +
+        (isSeller ? '<button type="button" class="form-submit" onclick="openPostReservationPanel(activeOperation)" style="width:100%">⚙️ Gestionar operación</button>' : '<button type="button" class="btn-sm primary" onclick="openPostReservationPanel(activeOperation)" style="width:100%;padding:10px">⚙️ Gestionar operación</button>') +
       '</div>';
   } else if (op.status === 'completada') {
     actEl.innerHTML =
@@ -5352,6 +5336,8 @@ function syncRemoteNegotiations() {
           addNotification('✅', 'Propuesta aceptada', carLabel, 'green', action);
         } else if (payload.event === 'reservation_paid') {
           addNotification('💳', 'Reserva confirmada', carLabel + ' · El comprador informó el pago de la seña.', 'green', action);
+        } else if (payload.event === 'workflow_updated') {
+          addNotification('📋', 'Actualización de operación', carLabel, 'green', action);
         } else if (payload.event === 'sale_completed') {
           addNotification('🎉', 'Venta completada', carLabel, 'green', action);
         }
@@ -5420,6 +5406,123 @@ function showReservationModal() {
   el.style.zIndex = '9300';
 }
 
+function openPostReservationPanel(op) {
+  if (!op || !currentUser) return;
+  activeOperation = op;
+  var isBuyer = op.buyer_id === currentUser.id;
+  var isSeller = op.seller_id === currentUser.id;
+  var existing = document.getElementById('post-reservation-modal');
+  if (existing) existing.remove();
+
+  var workflow = op.workflow || {};
+  var modal = document.createElement('div');
+  modal.id = 'post-reservation-modal';
+  modal.className = 'modal-overlay';
+  modal.style.zIndex = '12500';
+
+  var payment = workflow.payment_method || '';
+  var finance = workflow.financing;
+  modal.innerHTML =
+    '<div class="modal-box" style="max-width:620px;max-height:90vh;overflow:auto">' +
+      '<button type="button" class="modal-close" onclick="closePostReservationPanel()">✕</button>' +
+      '<div style="font-size:36px;margin-bottom:8px">🚗</div>' +
+      '<div class="modal-title">Gestión de la operación</div>' +
+      '<div class="modal-sub">' + esc(op.car_name || 'Vehículo') + ' · Ref. ' + esc(op.id || '') + '</div>' +
+      '<div style="display:flex;gap:6px;margin:18px 0;flex-wrap:wrap">' +
+        ['Reserva','Forma de pago','Financiación','Documentación','Entrega'].map(function(x,i) {
+          return '<div style="flex:1;min-width:90px;background:' + (i===0?'var(--accent-light)':'var(--bg)') + ';border-radius:8px;padding:8px;text-align:center;font-size:.68rem;font-weight:600">' + (i+1) + '. ' + x + '</div>';
+        }).join('') +
+      '</div>' +
+      '<div style="background:var(--green-light);border:1px solid var(--green);border-radius:12px;padding:14px;margin-bottom:16px">' +
+        '<div style="font-weight:700;color:var(--green)">💳 Reserva informada</div>' +
+        '<div style="font-size:.78rem;color:var(--text2);margin-top:4px">' + (isBuyer ? 'La agencia debe verificar la seña. Mientras tanto podés completar los datos de la operación.' : 'El comprador informó la seña. Completá los datos para avanzar con la operación.') + '</div>' +
+      '</div>' +
+      '<div id="post-reservation-content"></div>' +
+    '</div>';
+  document.body.appendChild(modal);
+
+  var body=document.getElementById('post-reservation-content');
+  var html =
+    '<div style="font-weight:700;margin-bottom:8px">1. ¿Cómo vas a pagar el saldo?</div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:18px">' +
+      ['transferencia','efectivo','mercadopago','financiacion'].map(function(v) {
+        var labels={transferencia:'🏦 Transferencia',efectivo:'💵 Efectivo',mercadopago:'💳 Mercado Pago',financiacion:'📊 Financiación'};
+        return '<button type="button" class="btn-sm ' + (payment===v?'primary':'') + '" onclick="setWorkflowPayment(\''+v+'\')">' + labels[v] + '</button>';
+      }).join('') +
+    '</div>' +
+    '<div id="workflow-finance" style="' + (payment==='financiacion'?'display:block':'display:none') + ';background:var(--bg);border-radius:12px;padding:14px;margin-bottom:16px">' +
+      '<div style="font-weight:700;margin-bottom:10px">2. Datos de financiación</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:9px">' +
+        '<input id="wf-down" class="form-input" type="number" placeholder="Anticipo" value="' + (finance&&finance.down_payment||'') + '">' +
+        '<select id="wf-term" class="form-input"><option value="">Plazo</option><option>12 meses</option><option>24 meses</option><option>36 meses</option><option>48 meses</option><option>60 meses</option></select>' +
+      '</div>' +
+      '<button type="button" class="btn-sm primary" style="width:100%;margin-top:10px" onclick="saveWorkflowFinance()">Guardar financiación</button>' +
+    '</div>' +
+    '<div style="font-weight:700;margin-bottom:8px">3. ¿Qué necesitás coordinar?</div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:16px">' +
+      '<button type="button" class="btn-sm" onclick="addWorkflowQuestion(\'documentacion\')">📄 Documentación</button>' +
+      '<button type="button" class="btn-sm" onclick="addWorkflowQuestion(\'entrega\')">📅 Entrega</button>' +
+      '<button type="button" class="btn-sm" onclick="addWorkflowQuestion(\'transferencia\')">🔑 Transferencia</button>' +
+      '<button type="button" class="btn-sm" onclick="addWorkflowQuestion(\'saldo\')">💰 Saldo final</button>' +
+    '</div>' +
+    '<div style="border-top:1px solid var(--border);padding-top:14px">' +
+      '<div style="font-size:.75rem;color:var(--text3);margin-bottom:8px">Estado actual</div>' +
+      '<div style="font-weight:600">' + (workflow.payment_method ? 'Pago: '+esc(workflow.payment_method) : 'Falta definir forma de pago') + '</div>' +
+      (workflow.financing ? '<div style="font-size:.78rem;color:var(--text2);margin-top:5px">Financiación: anticipo ' + fmtPrice(workflow.financing.down_payment||0) + ' · ' + esc(workflow.financing.term||'') + '</div>' : '') +
+    '</div>';
+
+  body.innerHTML=html;
+
+  if (finance && finance.term) {
+    var sel=document.getElementById('wf-term'); if(sel) sel.value=finance.term;
+  }
+}
+
+function closePostReservationPanel() {
+  var m=document.getElementById('post-reservation-modal'); if(m) m.remove();
+}
+
+function persistWorkflow() {
+  if (!activeOperation || !currentUser) return;
+  activeOperation.workflow = activeOperation.workflow || {};
+  activeOperation.updated_at = new Date().toISOString();
+  updateOperation(activeOperation);
+  var recipient = activeOperation.buyer_id === currentUser.id ? activeOperation.seller_id : activeOperation.buyer_id;
+  sendRemoteNegotiationEvent('workflow_updated', activeOperation, recipient);
+}
+
+function setWorkflowPayment(method) {
+  if (!activeOperation) return;
+  activeOperation.workflow = activeOperation.workflow || {};
+  activeOperation.workflow.payment_method = method;
+  persistWorkflow();
+  openPostReservationPanel(activeOperation);
+  toast('Forma de pago guardada', 'success');
+}
+
+function saveWorkflowFinance() {
+  if (!activeOperation) return;
+  var down=parseFloat(document.getElementById('wf-down').value)||0;
+  var term=document.getElementById('wf-term').value||'';
+  activeOperation.workflow=activeOperation.workflow||{};
+  activeOperation.workflow.financing={down_payment:down,term:term,requested:true};
+  persistWorkflow();
+  openPostReservationPanel(activeOperation);
+  toast('Datos de financiación guardados', 'success');
+}
+
+function addWorkflowQuestion(kind) {
+  if (!activeOperation) return;
+  activeOperation.workflow=activeOperation.workflow||{};
+  activeOperation.workflow.questions=activeOperation.workflow.questions||[];
+  activeOperation.workflow.questions.push({type:kind,from:currentUser.id,ts:new Date().toISOString()});
+  var recipient=activeOperation.buyer_id===currentUser.id?activeOperation.seller_id:activeOperation.buyer_id;
+  var labels={documentacion:'📄 Solicité información sobre la documentación.',entrega:'📅 Quiero coordinar la fecha/lugar de entrega.',transferencia:'🔑 Quiero coordinar la transferencia.',saldo:'💰 Quiero coordinar el pago del saldo.'};
+  getSB().from('messages').insert(buildChatRow(activeOperation.car_id,activeOperation.buyer_id,activeOperation.seller_id,'text',{to_user:recipient,operation_id:activeOperation.id,text:labels[kind]}));
+  persistWorkflow();
+  toast('Solicitud enviada a la otra parte', 'success');
+}
+
 function confirmReservationPaid() {
   if (!activeOperation || !currentUser) return;
   var op = activeOperation;
@@ -5450,8 +5553,8 @@ function confirmReservationPaid() {
   });
 
   document.getElementById('reservation-modal').classList.add('hidden');
-  openNegotiationModal(op);
-  toast('🎉 Reserva informada. La agencia debe verificarla para continuar.', 'success');
+  openPostReservationPanel(op);
+  toast('🎉 Reserva informada. Ahora podés gestionar la operación.', 'success');
   addNotification('💳', 'Reserva informada', op.car_name + ' · Esperando confirmación de la agencia', 'green', 'operation:' + op.id);
 }
 
