@@ -5067,9 +5067,19 @@ function renderNegActions(op, isBuyer, isSeller) {
   } else if (op.status === 'reserva_pagada') {
     actEl.innerHTML =
       '<div style="background:var(--green-light);border:2px solid var(--green);border-radius:var(--radius);padding:16px;text-align:center">' +
+        '<div style="font-size:1.2rem;margin-bottom:8px">💳</div>' +
+        '<div style="font-weight:700;color:var(--green);margin-bottom:4px">Reserva informada</div>' +
+        '<div style="font-size:0.82rem;color:var(--text2);margin-bottom:12px">' +
+          (isSeller ? 'El comprador informó el pago de la seña. Verificá el ingreso y luego confirmá la venta.' : 'La agencia debe verificar la seña y confirmar la operación. Después podrán coordinar documentación, saldo y entrega.') +
+        '</div>' +
+        (isSeller ? '<button type="button" class="form-submit" onclick="confirmSale()" style="width:100%">🎉 Confirmar venta y completar operación</button>' : '<button type="button" class="btn-sm primary" onclick="navigate(\'messages\');closeNegotiationModal()" style="width:100%;padding:10px">💬 Contactar / coordinar con la agencia</button>') +
+      '</div>';
+  } else if (op.status === 'completada') {
+    actEl.innerHTML =
+      '<div style="background:var(--green-light);border:2px solid var(--green);border-radius:var(--radius);padding:16px;text-align:center">' +
         '<div style="font-size:1.2rem;margin-bottom:8px">🎉</div>' +
-        '<div style="font-weight:700;color:var(--green);margin-bottom:4px">¡Reserva confirmada!</div>' +
-        '<div style="font-size:0.82rem;color:var(--text2)">El vehículo está reservado. Coordiná la entrega con la agencia.</div>' +
+        '<div style="font-weight:700;color:var(--green);margin-bottom:4px">¡Venta completada!</div>' +
+        '<div style="font-size:0.82rem;color:var(--text2)">La operación quedó registrada. Coordiná documentación, saldo y entrega con la agencia.</div>' +
       '</div>';
   }
 }
@@ -5340,6 +5350,10 @@ function syncRemoteNegotiations() {
           addNotification('🤝', 'Nueva negociación', carLabel, 'green', action);
         } else if (payload.event === 'proposal_accepted') {
           addNotification('✅', 'Propuesta aceptada', carLabel, 'green', action);
+        } else if (payload.event === 'reservation_paid') {
+          addNotification('💳', 'Reserva confirmada', carLabel + ' · El comprador informó el pago de la seña.', 'green', action);
+        } else if (payload.event === 'sale_completed') {
+          addNotification('🎉', 'Venta completada', carLabel, 'green', action);
         }
 
         processed[row.id] = true;
@@ -5407,22 +5421,64 @@ function showReservationModal() {
 }
 
 function confirmReservationPaid() {
-  if (!activeOperation) return;
-  activeOperation.status = 'reserva_pagada';
-  activeOperation.payment_status = 'pagada_manual';
-  activeOperation.paid_at = new Date().toISOString();
-  activeOperation.history = activeOperation.history || [];
-  activeOperation.history.push({
+  if (!activeOperation || !currentUser) return;
+  var op = activeOperation;
+  op.status = 'reserva_pagada';
+  op.payment_status = 'pagada_manual';
+  op.paid_at = new Date().toISOString();
+  op.history = op.history || [];
+  op.history.push({
     type: 'system',
-    text: 'Reserva marcada como pagada (transferencia)',
+    text: 'El comprador informó que realizó la transferencia de la seña. Pendiente de verificación por la agencia.',
     ts: new Date().toISOString()
   });
-  activeOperation.updated_at = new Date().toISOString();
-  updateOperation(activeOperation);
+  op.updated_at = new Date().toISOString();
+  updateOperation(op);
+
+  var sellerId = op.seller_id;
+  sendRemoteNegotiationEvent('reservation_paid', op, sellerId).then(function(res) {
+    if (res && res.error) console.error('No se pudo notificar la reserva al vendedor:', res.error);
+  });
+
+  // También queda registrado en el hilo de chat.
+  getSB().from('messages').insert(buildChatRow(op.car_id, op.buyer_id, op.seller_id, 'text', {
+    to_user: sellerId,
+    operation_id: op.id,
+    text: '💳 Informé el pago de la seña. Quedo a la espera de la confirmación de la agencia para coordinar la operación.'
+  })).then(function(res) {
+    if (res && res.error) console.error('No se pudo registrar el pago de reserva en el chat:', res.error);
+  });
+
   document.getElementById('reservation-modal').classList.add('hidden');
-  openNegotiationModal(activeOperation);
-  toast('🎉 ¡Reserva confirmada! El vehículo está a tu nombre.', 'success');
-  addNotification('🎉', 'Reserva confirmada', activeOperation.car_name, 'green', null);
+  openNegotiationModal(op);
+  toast('🎉 Reserva informada. La agencia debe verificarla para continuar.', 'success');
+  addNotification('💳', 'Reserva informada', op.car_name + ' · Esperando confirmación de la agencia', 'green', 'operation:' + op.id);
+}
+
+function confirmSale() {
+  if (!activeOperation || !currentUser || activeOperation.seller_id !== currentUser.id) return;
+  var op = activeOperation;
+  op.status = 'completada';
+  op.sale_completed_at = new Date().toISOString();
+  op.history = op.history || [];
+  op.history.push({
+    type: 'system',
+    text: 'Venta confirmada por la agencia. Operación completada.',
+    ts: new Date().toISOString()
+  });
+  op.updated_at = new Date().toISOString();
+  updateOperation(op);
+
+  var recipientId = op.buyer_id;
+  sendRemoteNegotiationEvent('sale_completed', op, recipientId);
+  getSB().from('messages').insert(buildChatRow(op.car_id, op.buyer_id, op.seller_id, 'text', {
+    to_user: recipientId,
+    operation_id: op.id,
+    text: '🎉 La agencia confirmó la venta. La operación quedó completada. Coordiná con la agencia la documentación y entrega.'
+  }));
+
+  openNegotiationModal(op);
+  toast('🎉 Venta completada', 'success');
 }
 
 function closeNegotiationModal() {
