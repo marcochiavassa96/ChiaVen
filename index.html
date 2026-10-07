@@ -5458,7 +5458,7 @@ function openPostReservationPanel(op) {
     if (stepStatus('payment')!=='completed' && isBuyer) paymentAction+='<button type="button" class="btn-sm primary" onclick="completeWorkflowPayment()">✓ Confirmé la forma de pago</button>';
   } else if (isBuyer) {
     paymentAction='<div style="display:grid;grid-template-columns:1fr 1fr;gap:7px">'+
-      Object.keys(paymentLabels).map(function(v){return '<button type="button" class="btn-sm" onclick="setWorkflowPayment(\\''+v+'\\')">'+paymentLabels[v]+'</button>';}).join('')+
+      Object.keys(paymentLabels).map(function(v){return '<button type="button" class="btn-sm" onclick="setWorkflowPayment(\''+v+'\')">'+paymentLabels[v]+'</button>';}).join('')+
       '</div>';
   } else {
     paymentAction='<div style="font-size:.76rem;color:var(--text3)">Esperando que el comprador indique cómo pagará el saldo.</div>';
@@ -5478,13 +5478,13 @@ function openPostReservationPanel(op) {
   stepsHtml += stepCard(3,'financing','📊','Financiación','Si corresponde, la solicitud queda registrada para que la agencia la gestione.','both',financeAction);
 
   var docsAction='';
-  if (isBuyer && stepStatus('documents')!=='completed') docsAction='<button type="button" class="btn-sm" onclick="addWorkflowQuestion(\\'documentacion\\')">📄 Solicitar documentación</button>';
-  if (isSeller && stepStatus('documents')!=='completed') docsAction='<button type="button" class="btn-sm primary" onclick="confirmWorkflowStep(\\'documents\\')">✓ Documentación lista</button>';
+  if (isBuyer && stepStatus('documents')!=='completed') docsAction='<button type="button" class="btn-sm" onclick="addWorkflowQuestion(\'documentacion\')">📄 Solicitar documentación</button>';
+  if (isSeller && stepStatus('documents')!=='completed') docsAction='<button type="button" class="btn-sm primary" onclick="confirmWorkflowStep(\'documents\')">✓ Documentación lista</button>';
   stepsHtml += stepCard(4,'documents','📄','Documentación','Preparación de transferencia, formularios y documentación necesaria.','seller',docsAction);
 
   var deliveryAction='';
-  if (isBuyer && stepStatus('delivery')!=='completed') deliveryAction='<button type="button" class="btn-sm" onclick="addWorkflowQuestion(\\'entrega\\')">📅 Solicitar coordinación de entrega</button>';
-  if (isSeller && stepStatus('delivery')!=='completed') deliveryAction='<button type="button" class="btn-sm primary" onclick="confirmWorkflowStep(\\'delivery\\')">✓ Entrega coordinada</button>';
+  if (isBuyer && stepStatus('delivery')!=='completed') deliveryAction='<button type="button" class="btn-sm" onclick="addWorkflowQuestion(\'entrega\')">📅 Solicitar coordinación de entrega</button>';
+  if (isSeller && stepStatus('delivery')!=='completed') deliveryAction='<button type="button" class="btn-sm primary" onclick="confirmWorkflowStep(\'delivery\')">✓ Entrega coordinada</button>';
   stepsHtml += stepCard(5,'delivery','🚗','Entrega','Coordiná fecha, lugar y entrega del vehículo.','seller',deliveryAction);
 
   var balanceAction='';
