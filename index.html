@@ -5411,71 +5411,103 @@ function openPostReservationPanel(op) {
   activeOperation = op;
   var isBuyer = op.buyer_id === currentUser.id;
   var isSeller = op.seller_id === currentUser.id;
+  var w = op.workflow || {};
+  w.steps = w.steps || {};
   var existing = document.getElementById('post-reservation-modal');
   if (existing) existing.remove();
 
-  var workflow = op.workflow || {};
-  var modal = document.createElement('div');
-  modal.id = 'post-reservation-modal';
-  modal.className = 'modal-overlay';
-  modal.style.zIndex = '12500';
-
-  var payment = workflow.payment_method || '';
-  var finance = workflow.financing;
-  modal.innerHTML =
-    '<div class="modal-box" style="max-width:620px;max-height:90vh;overflow:auto">' +
-      '<button type="button" class="modal-close" onclick="closePostReservationPanel()">✕</button>' +
-      '<div style="font-size:36px;margin-bottom:8px">🚗</div>' +
-      '<div class="modal-title">Gestión de la operación</div>' +
-      '<div class="modal-sub">' + esc(op.car_name || 'Vehículo') + ' · Ref. ' + esc(op.id || '') + '</div>' +
-      '<div style="display:flex;gap:6px;margin:18px 0;flex-wrap:wrap">' +
-        ['Reserva','Forma de pago','Financiación','Documentación','Entrega'].map(function(x,i) {
-          return '<div style="flex:1;min-width:90px;background:' + (i===0?'var(--accent-light)':'var(--bg)') + ';border-radius:8px;padding:8px;text-align:center;font-size:.68rem;font-weight:600">' + (i+1) + '. ' + x + '</div>';
-        }).join('') +
-      '</div>' +
-      '<div style="background:var(--green-light);border:1px solid var(--green);border-radius:12px;padding:14px;margin-bottom:16px">' +
-        '<div style="font-weight:700;color:var(--green)">💳 Reserva informada</div>' +
-        '<div style="font-size:.78rem;color:var(--text2);margin-top:4px">' + (isBuyer ? 'La agencia debe verificar la seña. Mientras tanto podés completar los datos de la operación.' : 'El comprador informó la seña. Completá los datos para avanzar con la operación.') + '</div>' +
-      '</div>' +
-      '<div id="post-reservation-content"></div>' +
-    '</div>';
-  document.body.appendChild(modal);
-
-  var body=document.getElementById('post-reservation-content');
-  var html =
-    '<div style="font-weight:700;margin-bottom:8px">1. ¿Cómo vas a pagar el saldo?</div>' +
-    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:18px">' +
-      ['transferencia','efectivo','mercadopago','financiacion'].map(function(v) {
-        var labels={transferencia:'🏦 Transferencia',efectivo:'💵 Efectivo',mercadopago:'💳 Mercado Pago',financiacion:'📊 Financiación'};
-        return '<button type="button" class="btn-sm ' + (payment===v?'primary':'') + '" onclick="setWorkflowPayment(\''+v+'\')">' + labels[v] + '</button>';
-      }).join('') +
-    '</div>' +
-    '<div id="workflow-finance" style="' + (payment==='financiacion'?'display:block':'display:none') + ';background:var(--bg);border-radius:12px;padding:14px;margin-bottom:16px">' +
-      '<div style="font-weight:700;margin-bottom:10px">2. Datos de financiación</div>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:9px">' +
-        '<input id="wf-down" class="form-input" type="number" placeholder="Anticipo" value="' + (finance&&finance.down_payment||'') + '">' +
-        '<select id="wf-term" class="form-input"><option value="">Plazo</option><option>12 meses</option><option>24 meses</option><option>36 meses</option><option>48 meses</option><option>60 meses</option></select>' +
-      '</div>' +
-      '<button type="button" class="btn-sm primary" style="width:100%;margin-top:10px" onclick="saveWorkflowFinance()">Guardar financiación</button>' +
-    '</div>' +
-    '<div style="font-weight:700;margin-bottom:8px">3. ¿Qué necesitás coordinar?</div>' +
-    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:16px">' +
-      '<button type="button" class="btn-sm" onclick="addWorkflowQuestion(\'documentacion\')">📄 Documentación</button>' +
-      '<button type="button" class="btn-sm" onclick="addWorkflowQuestion(\'entrega\')">📅 Entrega</button>' +
-      '<button type="button" class="btn-sm" onclick="addWorkflowQuestion(\'transferencia\')">🔑 Transferencia</button>' +
-      '<button type="button" class="btn-sm" onclick="addWorkflowQuestion(\'saldo\')">💰 Saldo final</button>' +
-    '</div>' +
-    '<div style="border-top:1px solid var(--border);padding-top:14px">' +
-      '<div style="font-size:.75rem;color:var(--text3);margin-bottom:8px">Estado actual</div>' +
-      '<div style="font-weight:600">' + (workflow.payment_method ? 'Pago: '+esc(workflow.payment_method) : 'Falta definir forma de pago') + '</div>' +
-      (workflow.financing ? '<div style="font-size:.78rem;color:var(--text2);margin-top:5px">Financiación: anticipo ' + fmtPrice(workflow.financing.down_payment||0) + ' · ' + esc(workflow.financing.term||'') + '</div>' : '') +
-    '</div>';
-
-  body.innerHTML=html;
-
-  if (finance && finance.term) {
-    var sel=document.getElementById('wf-term'); if(sel) sel.value=finance.term;
+  function stepStatus(key) {
+    return w.steps[key] && w.steps[key].status || 'pending';
   }
+  function stepBadge(key) {
+    var st = stepStatus(key);
+    if (st === 'completed') return '<span style="color:var(--green);font-weight:700">✓ Completado</span>';
+    if (st === 'waiting') return '<span style="color:var(--amber);font-weight:700">⏳ Esperando</span>';
+    return '<span style="color:var(--text3)">Pendiente</span>';
+  }
+  function ownerLabel(owner) {
+    return owner === 'buyer' ? 'Comprador' : owner === 'seller' ? 'Agencia' : 'Ambos';
+  }
+  function stepCard(num, key, icon, title, desc, owner, actionHtml) {
+    var st=stepStatus(key);
+    var bg=st==='completed'?'var(--green-light)':st==='waiting'?'var(--amber-light)':'var(--bg)';
+    return '<div style="border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:10px;background:'+bg+'">' +
+      '<div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">' +
+        '<div style="display:flex;gap:10px"><div style="font-size:21px">'+icon+'</div><div><div style="font-weight:700;font-size:.88rem">'+num+'. '+title+'</div><div style="font-size:.72rem;color:var(--text3);margin-top:3px">Responsable: '+ownerLabel(owner)+'</div></div></div>' +
+        '<div style="font-size:.72rem;white-space:nowrap">'+stepBadge(key)+'</div>' +
+      '</div>' +
+      '<div style="font-size:.78rem;color:var(--text2);margin:9px 0 0 31px">'+desc+'</div>' +
+      (actionHtml ? '<div style="margin:11px 0 0 31px">'+actionHtml+'</div>' : '') +
+    '</div>';
+  }
+
+  var payment=w.payment_method||'';
+  var finance=w.financing||null;
+  var paymentLabels={transferencia:'🏦 Transferencia',efectivo:'💵 Efectivo',mercadopago:'💳 Mercado Pago',financiacion:'📊 Financiación'};
+  var stepsHtml='';
+
+  stepsHtml += stepCard(1,'reservation','💳','Verificar reserva',
+    isSeller ? 'El comprador informó la transferencia de la seña. Verificá el ingreso para liberar el siguiente paso.' : 'Esperando que la agencia verifique la transferencia de la seña.',
+    'seller',
+    isSeller && stepStatus('reservation')!=='completed'
+      ? '<button type="button" class="btn-sm primary" onclick="verifyWorkflowReservation()">✓ Confirmar reserva recibida</button>' : '');
+
+  var paymentAction='';
+  if (payment) {
+    paymentAction='<div style="font-size:.78rem;font-weight:600;margin-bottom:8px">'+paymentLabels[payment]+'</div>';
+    if (stepStatus('payment')!=='completed' && isBuyer) paymentAction+='<button type="button" class="btn-sm primary" onclick="completeWorkflowPayment()">✓ Confirmé la forma de pago</button>';
+  } else if (isBuyer) {
+    paymentAction='<div style="display:grid;grid-template-columns:1fr 1fr;gap:7px">'+
+      Object.keys(paymentLabels).map(function(v){return '<button type="button" class="btn-sm" onclick="setWorkflowPayment(\\''+v+'\\')">'+paymentLabels[v]+'</button>';}).join('')+
+      '</div>';
+  } else {
+    paymentAction='<div style="font-size:.76rem;color:var(--text3)">Esperando que el comprador indique cómo pagará el saldo.</div>';
+  }
+  stepsHtml += stepCard(2,'payment','💰','Forma de pago','Definí y confirmá cómo se pagará el saldo restante.','buyer',paymentAction);
+
+  var financeAction='';
+  if (payment==='financiacion') {
+    if (finance) financeAction='<div style="font-size:.76rem;color:var(--text2);margin-bottom:8px">Anticipo: <strong>'+fmtPrice(finance.down_payment||0)+'</strong> · Plazo: <strong>'+esc(finance.term||'')+'</strong></div>';
+    if (isBuyer && stepStatus('financing')!=='completed') {
+      financeAction += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:7px"><input id="wf-down" class="form-input" type="number" placeholder="Anticipo" value="'+(finance&&finance.down_payment||'')+'"><select id="wf-term" class="form-input"><option value="">Plazo</option><option>12 meses</option><option>24 meses</option><option>36 meses</option><option>48 meses</option><option>60 meses</option></select></div><button type="button" class="btn-sm primary" onclick="saveWorkflowFinance()">Guardar solicitud</button>';
+    }
+    if (isSeller && finance && stepStatus('financing')!=='completed') financeAction += '<button type="button" class="btn-sm primary" onclick="confirmWorkflowFinancing()">✓ Confirmar financiación</button>';
+  } else {
+    financeAction='<div style="font-size:.76rem;color:var(--text3)">No se requiere financiación.</div>';
+  }
+  stepsHtml += stepCard(3,'financing','📊','Financiación','Si corresponde, la solicitud queda registrada para que la agencia la gestione.','both',financeAction);
+
+  var docsAction='';
+  if (isBuyer && stepStatus('documents')!=='completed') docsAction='<button type="button" class="btn-sm" onclick="addWorkflowQuestion(\\'documentacion\\')">📄 Solicitar documentación</button>';
+  if (isSeller && stepStatus('documents')!=='completed') docsAction='<button type="button" class="btn-sm primary" onclick="confirmWorkflowStep(\\'documents\\')">✓ Documentación lista</button>';
+  stepsHtml += stepCard(4,'documents','📄','Documentación','Preparación de transferencia, formularios y documentación necesaria.','seller',docsAction);
+
+  var deliveryAction='';
+  if (isBuyer && stepStatus('delivery')!=='completed') deliveryAction='<button type="button" class="btn-sm" onclick="addWorkflowQuestion(\\'entrega\\')">📅 Solicitar coordinación de entrega</button>';
+  if (isSeller && stepStatus('delivery')!=='completed') deliveryAction='<button type="button" class="btn-sm primary" onclick="confirmWorkflowStep(\\'delivery\\')">✓ Entrega coordinada</button>';
+  stepsHtml += stepCard(5,'delivery','🚗','Entrega','Coordiná fecha, lugar y entrega del vehículo.','seller',deliveryAction);
+
+  var balanceAction='';
+  if (stepStatus('payment')==='completed' && isBuyer && stepStatus('balance')!=='completed') balanceAction='<button type="button" class="btn-sm primary" onclick="confirmWorkflowBalance()">💳 Informar saldo pagado</button>';
+  if (stepStatus('balance')==='completed' && isSeller && stepStatus('sale')!=='completed') balanceAction='<button type="button" class="btn-sm primary" onclick="confirmSale()">🎉 Confirmar venta y completar</button>';
+  stepsHtml += stepCard(6,'balance','🏦','Saldo final','Cuando corresponda, registrá el pago del saldo. La agencia deberá verificarlo antes de completar la venta.','both',balanceAction);
+
+  stepsHtml += '<div style="margin-top:14px;padding:12px;border-top:1px solid var(--border);font-size:.75rem;color:var(--text3)">Ref. operación: <strong>'+esc(op.id||'')+'</strong> · Última actualización: '+(op.updated_at?new Date(op.updated_at).toLocaleString('es-AR'):'—')+'</div>';
+
+  var modal=document.createElement('div');
+  modal.id='post-reservation-modal';
+  modal.className='modal-overlay';
+  modal.style.zIndex='12500';
+  modal.innerHTML='<div class="modal-box" style="max-width:680px;max-height:92vh;overflow:auto">'+
+    '<button type="button" class="modal-close" onclick="closePostReservationPanel()">✕</button>'+
+    '<div style="font-size:34px;margin-bottom:6px">📋</div>'+
+    '<div class="modal-title">Gestión de la operación</div>'+
+    '<div class="modal-sub">'+esc(op.car_name||'Vehículo')+' · '+(isBuyer?'Comprador':'Agencia')+'</div>'+
+    '<div style="margin:16px 0 14px;padding:12px 14px;border-radius:12px;background:var(--accent-light);font-size:.8rem;color:var(--text2)">Cada paso tiene un responsable. Cuando una parte completa un paso, la otra recibe la actualización automáticamente.</div>'+
+    stepsHtml+
+  '</div>';
+  document.body.appendChild(modal);
+  if(finance&&finance.term){var sel=document.getElementById('wf-term');if(sel)sel.value=finance.term;}
 }
 
 function closePostReservationPanel() {
@@ -5489,6 +5521,58 @@ function persistWorkflow() {
   updateOperation(activeOperation);
   var recipient = activeOperation.buyer_id === currentUser.id ? activeOperation.seller_id : activeOperation.buyer_id;
   sendRemoteNegotiationEvent('workflow_updated', activeOperation, recipient);
+}
+
+function setWorkflowStep(key,status,extra) {
+  if(!activeOperation) return;
+  activeOperation.workflow=activeOperation.workflow||{};
+  activeOperation.workflow.steps=activeOperation.workflow.steps||{};
+  activeOperation.workflow.steps[key]=Object.assign({status:status,by:currentUser.id,ts:new Date().toISOString()},extra||{});
+  persistWorkflow();
+}
+
+function verifyWorkflowReservation() {
+  if(!activeOperation || activeOperation.seller_id!==currentUser.id) return;
+  setWorkflowStep('reservation','completed');
+  activeOperation.payment_status='verificada';
+  activeOperation.history=activeOperation.history||[];
+  activeOperation.history.push({type:'system',text:'La agencia verificó la recepción de la reserva.',ts:new Date().toISOString()});
+  openPostReservationPanel(activeOperation);
+  toast('Reserva verificada. El siguiente paso quedó habilitado.', 'success');
+}
+
+function completeWorkflowPayment() {
+  if(!activeOperation || activeOperation.buyer_id!==currentUser.id) return;
+  if(!activeOperation.workflow || !activeOperation.workflow.payment_method) return;
+  setWorkflowStep('payment','completed');
+  openPostReservationPanel(activeOperation);
+  toast('Forma de pago confirmada.', 'success');
+}
+
+function confirmWorkflowFinancing() {
+  if(!activeOperation || activeOperation.seller_id!==currentUser.id) return;
+  setWorkflowStep('financing','completed',{approved_at:new Date().toISOString()});
+  openPostReservationPanel(activeOperation);
+  toast('Financiación confirmada por la agencia.', 'success');
+}
+
+function confirmWorkflowStep(key) {
+  if(!activeOperation) return;
+  setWorkflowStep(key,'completed');
+  openPostReservationPanel(activeOperation);
+  toast('Paso actualizado.', 'success');
+}
+
+function confirmWorkflowBalance() {
+  if(!activeOperation || activeOperation.buyer_id!==currentUser.id) return;
+  setWorkflowStep('balance','completed',{reported_at:new Date().toISOString()});
+  var recipient=activeOperation.seller_id;
+  getSB().from('messages').insert(buildChatRow(activeOperation.car_id,activeOperation.buyer_id,activeOperation.seller_id,'text',{
+    to_user:recipient,operation_id:activeOperation.id,text:'💳 Informé que pagué el saldo final. Queda pendiente la verificación de la agencia.'
+  }));
+  persistWorkflow();
+  openPostReservationPanel(activeOperation);
+  toast('Saldo informado. Esperando verificación de la agencia.', 'success');
 }
 
 function setWorkflowPayment(method) {
@@ -5560,6 +5644,7 @@ function confirmReservationPaid() {
 
 function confirmSale() {
   if (!activeOperation || !currentUser || activeOperation.seller_id !== currentUser.id) return;
+  if (!activeOperation.workflow || !activeOperation.workflow.steps || activeOperation.workflow.steps.balance.status !== 'completed') { toast('Primero verificá el pago del saldo.', 'info'); return; }
   var op = activeOperation;
   op.status = 'completada';
   op.sale_completed_at = new Date().toISOString();
