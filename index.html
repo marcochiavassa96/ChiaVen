@@ -5422,7 +5422,7 @@ function openPostReservationPanel(op) {
   function stepBadge(key) {
     var st = stepStatus(key);
     if (st === 'completed') return '<span style="color:var(--green);font-weight:700">✓ Completado</span>';
-    if (st === 'waiting') return '<span style="color:var(--amber);font-weight:700">⏳ Esperando</span>';
+    if (st === 'waiting' || st === 'reported') return '<span style="color:var(--amber);font-weight:700">⏳ ' + (st === 'reported' ? 'Esperando verificación' : 'Esperando') + '</span>';
     return '<span style="color:var(--text3)">Pendiente</span>';
   }
   function ownerLabel(owner) {
@@ -5453,7 +5453,9 @@ function openPostReservationPanel(op) {
       ? '<button type="button" class="btn-sm primary" onclick="verifyWorkflowReservation()">✓ Confirmar reserva recibida</button>' : '');
 
   var paymentAction='';
-  if (payment) {
+  if (stepStatus('reservation')!=='completed') {
+    paymentAction='<div style="font-size:.76rem;color:var(--text3)">Primero debe verificarse la reserva.</div>';
+  } else if (payment) {
     paymentAction='<div style="font-size:.78rem;font-weight:600;margin-bottom:8px">'+paymentLabels[payment]+'</div>';
     if (stepStatus('payment')!=='completed' && isBuyer) paymentAction+='<button type="button" class="btn-sm primary" onclick="completeWorkflowPayment()">✓ Confirmé la forma de pago</button>';
   } else if (isBuyer) {
@@ -5466,7 +5468,9 @@ function openPostReservationPanel(op) {
   stepsHtml += stepCard(2,'payment','💰','Forma de pago','Definí y confirmá cómo se pagará el saldo restante.','buyer',paymentAction);
 
   var financeAction='';
-  if (payment==='financiacion') {
+  if (stepStatus('reservation')!=='completed' || stepStatus('payment')!=='completed') {
+    financeAction='<div style="font-size:.76rem;color:var(--text3)">Se habilita después de confirmar la reserva y la forma de pago.</div>';
+  } else if (payment==='financiacion') {
     if (finance) financeAction='<div style="font-size:.76rem;color:var(--text2);margin-bottom:8px">Anticipo: <strong>'+fmtPrice(finance.down_payment||0)+'</strong> · Plazo: <strong>'+esc(finance.term||'')+'</strong></div>';
     if (isBuyer && stepStatus('financing')!=='completed') {
       financeAction += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:7px"><input id="wf-down" class="form-input" type="number" placeholder="Anticipo" value="'+(finance&&finance.down_payment||'')+'"><select id="wf-term" class="form-input"><option value="">Plazo</option><option>12 meses</option><option>24 meses</option><option>36 meses</option><option>48 meses</option><option>60 meses</option></select></div><button type="button" class="btn-sm primary" onclick="saveWorkflowFinance()">Guardar solicitud</button>';
@@ -5488,7 +5492,8 @@ function openPostReservationPanel(op) {
   stepsHtml += stepCard(5,'delivery','🚗','Entrega','Coordiná fecha, lugar y entrega del vehículo.','seller',deliveryAction);
 
   var balanceAction='';
-  if (stepStatus('payment')==='completed' && isBuyer && stepStatus('balance')!=='completed') balanceAction='<button type="button" class="btn-sm primary" onclick="confirmWorkflowBalance()">💳 Informar saldo pagado</button>';
+  if (stepStatus('payment')==='completed' && isBuyer && stepStatus('balance')!=='reported' && stepStatus('balance')!=='completed') balanceAction='<button type="button" class="btn-sm primary" onclick="confirmWorkflowBalance()">💳 Informar saldo pagado</button>';
+  if (stepStatus('balance')==='reported' && isSeller) balanceAction='<button type="button" class="btn-sm primary" onclick="verifyWorkflowBalance()">✓ Verificar saldo recibido</button>';
   if (stepStatus('balance')==='completed' && isSeller && stepStatus('sale')!=='completed') balanceAction='<button type="button" class="btn-sm primary" onclick="confirmSale()">🎉 Confirmar venta y completar</button>';
   stepsHtml += stepCard(6,'balance','🏦','Saldo final','Cuando corresponda, registrá el pago del saldo. La agencia deberá verificarlo antes de completar la venta.','both',balanceAction);
 
@@ -5565,7 +5570,7 @@ function confirmWorkflowStep(key) {
 
 function confirmWorkflowBalance() {
   if(!activeOperation || activeOperation.buyer_id!==currentUser.id) return;
-  setWorkflowStep('balance','completed',{reported_at:new Date().toISOString()});
+  setWorkflowStep('balance','reported',{reported_at:new Date().toISOString()});
   var recipient=activeOperation.seller_id;
   getSB().from('messages').insert(buildChatRow(activeOperation.car_id,activeOperation.buyer_id,activeOperation.seller_id,'text',{
     to_user:recipient,operation_id:activeOperation.id,text:'💳 Informé que pagué el saldo final. Queda pendiente la verificación de la agencia.'
@@ -5573,6 +5578,20 @@ function confirmWorkflowBalance() {
   persistWorkflow();
   openPostReservationPanel(activeOperation);
   toast('Saldo informado. Esperando verificación de la agencia.', 'success');
+}
+
+function verifyWorkflowBalance() {
+  if(!activeOperation || activeOperation.seller_id!==currentUser.id) return;
+  if(!activeOperation.workflow || !activeOperation.workflow.steps || activeOperation.workflow.steps.balance.status!=='reported') return;
+  setWorkflowStep('balance','completed',{verified_at:new Date().toISOString()});
+  activeOperation.history=activeOperation.history||[];
+  activeOperation.history.push({type:'system',text:'La agencia verificó la recepción del saldo final.',ts:new Date().toISOString()});
+  var recipient=activeOperation.buyer_id;
+  getSB().from('messages').insert(buildChatRow(activeOperation.car_id,activeOperation.buyer_id,activeOperation.seller_id,'text',{
+    to_user:recipient,operation_id:activeOperation.id,text:'✓ La agencia verificó el pago del saldo final. Ya puede completar la venta.'
+  }));
+  openPostReservationPanel(activeOperation);
+  toast('Saldo verificado. La venta puede completarse.', 'success');
 }
 
 function setWorkflowPayment(method) {
