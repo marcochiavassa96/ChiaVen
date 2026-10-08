@@ -5467,23 +5467,24 @@ function openPostReservationPanel(op) {
       ? '<button type="button" class="btn-sm primary" onclick="verifyWorkflowReservation()">✓ Confirmar reserva recibida</button>' : '');
 
   var paymentAction='';
-  if (stepStatus('reservation')!=='completed') {
-    paymentAction='<div style="font-size:.76rem;color:var(--text3)">Primero debe verificarse la reserva.</div>';
-  } else if (payment) {
+  if (payment) {
     paymentAction='<div style="font-size:.78rem;font-weight:600;margin-bottom:8px">'+paymentLabels[payment]+'</div>';
-    if (stepStatus('payment')!=='completed' && isBuyer) paymentAction+='<button type="button" class="btn-sm primary" onclick="completeWorkflowPayment()">✓ Confirmé la forma de pago</button>';
+    if (isBuyer && stepStatus('payment')!=='completed') {
+      paymentAction+='<button type="button" class="btn-sm primary" onclick="completeWorkflowPayment()">✓ Confirmar forma de pago</button>';
+      if (stepStatus('reservation')!=='completed') paymentAction+='<div style="font-size:.72rem;color:var(--text3);margin-top:7px">Podés dejarla preparada. Se habilitará cuando la agencia verifique la reserva.</div>';
+    }
   } else if (isBuyer) {
     paymentAction='<div style="display:grid;grid-template-columns:1fr 1fr;gap:7px">'+
       Object.keys(paymentLabels).map(function(v){return '<button type="button" class="btn-sm" onclick="setWorkflowPayment(\''+v+'\')">'+paymentLabels[v]+'</button>';}).join('')+
-      '</div>';
+      '</div><div style="font-size:.72rem;color:var(--text3);margin-top:7px">Elegí cómo pensás pagar el saldo. Después podrás confirmarlo.</div>';
   } else {
     paymentAction='<div style="font-size:.76rem;color:var(--text3)">Esperando que el comprador indique cómo pagará el saldo.</div>';
   }
   stepsHtml += stepCard(2,'payment','💰','Forma de pago','Definí y confirmá cómo se pagará el saldo restante.','buyer',paymentAction);
 
   var financeAction='';
-  if (stepStatus('reservation')!=='completed' || stepStatus('payment')!=='completed') {
-    financeAction='<div style="font-size:.76rem;color:var(--text3)">Se habilita después de confirmar la reserva y la forma de pago.</div>';
+  if (!payment) {
+    financeAction='<div style="font-size:.76rem;color:var(--text3)">Primero elegí la forma de pago en el paso 2.</div>';
   } else if (payment==='financiacion') {
     if (finance) financeAction='<div style="font-size:.76rem;color:var(--text2);margin-bottom:8px">Anticipo: <strong>'+fmtPrice(finance.down_payment||0)+'</strong> · Plazo: <strong>'+esc(finance.term||'')+'</strong></div>';
     if (isBuyer && stepStatus('financing')!=='completed') {
@@ -5518,7 +5519,14 @@ function openPostReservationPanel(op) {
   else saleAction='<div style="font-size:.76rem;color:var(--text3)">Esperando la confirmación final de la agencia.</div>';
   stepsHtml += stepCard(7,'sale','🎉','Confirmación de venta','La agencia confirma que recibió el saldo y que la operación queda finalizada.','seller',saleAction);
 
-  stepsHtml += '<div style="margin-top:14px;padding:12px;border-top:1px solid var(--border);font-size:.75rem;color:var(--text3)">Ref. operación: <strong>'+esc(op.id||'')+'</strong> · Última actualización: '+(op.updated_at?new Date(op.updated_at).toLocaleString('es-AR'):'—')+'</div>';
+  var coordNote=(w.coordination_note||'');
+  stepsHtml += '<div style="margin-top:14px;border-top:1px solid var(--border);padding-top:14px">'+
+    '<div style="font-weight:700;font-size:.84rem;margin-bottom:6px">📝 Datos para coordinar</div>'+
+    '<div style="font-size:.72rem;color:var(--text3);margin-bottom:8px">Podés dejar una indicación para la otra parte: horario, lugar, documentación o cualquier detalle de la operación.</div>'+
+    '<textarea id="wf-note" class="form-input" rows="3" placeholder="Ej.: puedo retirar el vehículo el viernes por la tarde...">'+esc(coordNote)+'</textarea>'+
+    '<button type="button" class="btn-sm primary" style="margin-top:8px" onclick="saveWorkflowNote()">Guardar indicación</button>'+
+  '</div>'+
+  '<div style="margin-top:14px;padding:12px;border-top:1px solid var(--border);font-size:.75rem;color:var(--text3)">Ref. operación: <strong>'+esc(op.id||'')+'</strong> · Última actualización: '+(op.updated_at?new Date(op.updated_at).toLocaleString('es-AR'):'—')+'</div>';
 
   var modal=document.createElement('div');
   modal.id='post-reservation-modal';
@@ -5571,6 +5579,10 @@ function verifyWorkflowReservation() {
 function completeWorkflowPayment() {
   if(!activeOperation || activeOperation.buyer_id!==currentUser.id) return;
   if(!activeOperation.workflow || !activeOperation.workflow.payment_method) return;
+  if(!activeOperation.workflow.steps || activeOperation.workflow.steps.reservation.status!=='completed') {
+    toast('La agencia todavía debe verificar la reserva.', 'info');
+    return;
+  }
   setWorkflowStep('payment','completed');
   if (activeOperation.workflow.payment_method !== 'financiacion') {
     setWorkflowStep('financing','completed',{not_required:true});
@@ -5619,13 +5631,25 @@ function verifyWorkflowBalance() {
   toast('Saldo verificado. La venta puede completarse.', 'success');
 }
 
+function saveWorkflowNote() {
+  if (!activeOperation) return;
+  var el=document.getElementById('wf-note');
+  activeOperation.workflow=activeOperation.workflow||{};
+  activeOperation.workflow.coordination_note=(el&&el.value||'').trim();
+  activeOperation.workflow.coordination_note_at=new Date().toISOString();
+  persistWorkflow();
+  openPostReservationPanel(activeOperation);
+  toast('Indicación guardada y enviada a la otra parte.', 'success');
+}
+
 function setWorkflowPayment(method) {
   if (!activeOperation) return;
   activeOperation.workflow = activeOperation.workflow || {};
   activeOperation.workflow.payment_method = method;
+  activeOperation.workflow.payment_selected_at = new Date().toISOString();
   persistWorkflow();
   openPostReservationPanel(activeOperation);
-  toast('Forma de pago guardada', 'success');
+  toast('Forma de pago preparada', 'success');
 }
 
 function saveWorkflowFinance() {
