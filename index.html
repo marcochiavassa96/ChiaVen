@@ -5444,11 +5444,11 @@ function openPostReservationPanel(op) {
   var payment=w.payment_method||'';
   var finance=w.financing||null;
   var paymentLabels={transferencia:'🏦 Transferencia',efectivo:'💵 Efectivo',mercadopago:'💳 Mercado Pago',financiacion:'📊 Financiación'};
-  var stepKeys=['reservation','payment','financing','documents','delivery','balance'];
+  var stepKeys=['reservation','payment','financing','documents','delivery','balance','sale'];
   var completedCount=stepKeys.filter(function(k){ return stepStatus(k)==='completed'; }).length;
   var progress=Math.round((completedCount/stepKeys.length)*100);
   var currentStep=stepKeys.find(function(k){ return stepStatus(k)!=='completed'; }) || 'balance';
-  var currentLabels={reservation:'Verificación de reserva',payment:'Forma de pago',financing:'Financiación',documents:'Documentación',delivery:'Entrega',balance:'Saldo final'};
+  var currentLabels={reservation:'Verificación de reserva',payment:'Forma de pago',financing:'Financiación',documents:'Documentación',delivery:'Entrega',balance:'Saldo final',sale:'Confirmación de venta'};
   var progressHtml='<div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:13px 14px;margin-bottom:14px">'+
     '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px">'+
       '<div><div style="font-size:.68rem;color:var(--text3);text-transform:uppercase;letter-spacing:.04em">Progreso de la operación</div><div style="font-weight:700;margin-top:2px">'+(progress===100?'🎉 Operación lista para completar':'Siguiente paso: '+currentLabels[currentStep])+'</div></div>'+
@@ -5510,6 +5510,13 @@ function openPostReservationPanel(op) {
   if (stepStatus('balance')==='reported' && isSeller) balanceAction='<button type="button" class="btn-sm primary" onclick="verifyWorkflowBalance()">✓ Verificar saldo recibido</button>';
   if (stepStatus('balance')==='completed' && isSeller && stepStatus('sale')!=='completed') balanceAction='<button type="button" class="btn-sm primary" onclick="confirmSale()">🎉 Confirmar venta y completar</button>';
   stepsHtml += stepCard(6,'balance','🏦','Saldo final','Cuando corresponda, registrá el pago del saldo. La agencia deberá verificarlo antes de completar la venta.','both',balanceAction);
+
+  var saleAction='';
+  if (stepStatus('balance')!=='completed') saleAction='<div style="font-size:.76rem;color:var(--text3)">Primero debe verificarse el saldo final.</div>';
+  else if (stepStatus('sale')==='completed') saleAction='<div style="font-size:.78rem;color:var(--green);font-weight:700">✓ La venta quedó registrada y la operación está completada.</div>';
+  else if (isSeller) saleAction='<button type="button" class="btn-sm primary" onclick="confirmSale()">🎉 Confirmar venta y completar operación</button>';
+  else saleAction='<div style="font-size:.76rem;color:var(--text3)">Esperando la confirmación final de la agencia.</div>';
+  stepsHtml += stepCard(7,'sale','🎉','Confirmación de venta','La agencia confirma que recibió el saldo y que la operación queda finalizada.','seller',saleAction);
 
   stepsHtml += '<div style="margin-top:14px;padding:12px;border-top:1px solid var(--border);font-size:.75rem;color:var(--text3)">Ref. operación: <strong>'+esc(op.id||'')+'</strong> · Última actualización: '+(op.updated_at?new Date(op.updated_at).toLocaleString('es-AR'):'—')+'</div>';
 
@@ -5683,6 +5690,9 @@ function confirmSale() {
   if (!activeOperation || !currentUser || activeOperation.seller_id !== currentUser.id) return;
   if (!activeOperation.workflow || !activeOperation.workflow.steps || activeOperation.workflow.steps.balance.status !== 'completed') { toast('Primero verificá el pago del saldo.', 'info'); return; }
   var op = activeOperation;
+  if (!op.workflow) op.workflow = {};
+  op.workflow.steps = op.workflow.steps || {};
+  op.workflow.steps.sale = {status:'completed', by:currentUser.id, ts:new Date().toISOString()};
   op.status = 'completada';
   op.sale_completed_at = new Date().toISOString();
   op.history = op.history || [];
@@ -5756,7 +5766,7 @@ document.addEventListener('keydown', function(e) {
   if (e.key !== 'Escape') return;
   closeMatchModal(); closeGallery(); closeCarDetail(); closeEditCar(); closeEditReq();
   closeUnlockModal(); closeForgotPassword(); closePayment(); closeNotifications();
-  ['premium-modal','credit-modal','news-preview-modal','comparator-modal','rating-modal','alerts-modal','negotiation-modal','reservation-modal'].forEach(function(id) { var el = document.getElementById(id); if (el) el.classList.add('hidden'); });
+  ['premium-modal','credit-modal','news-preview-modal','comparator-modal','rating-modal','alerts-modal','negotiation-modal','reservation-modal','post-reservation-modal'].forEach(function(id) { var el = document.getElementById(id); if (el) el.classList.add('hidden'); });
 });
 
 var gOverlay = document.getElementById('gallery-overlay');
