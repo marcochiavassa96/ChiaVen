@@ -5572,6 +5572,29 @@ function verifyWorkflowReservation() {
   activeOperation.payment_status='verificada';
   activeOperation.history=activeOperation.history||[];
   activeOperation.history.push({type:'system',text:'La agencia verificó la recepción de la reserva.',ts:new Date().toISOString()});
+
+  // Si el comprador ya había elegido la forma de pago, la verificación
+  // de la reserva habilita y confirma automáticamente el paso 2.
+  activeOperation.workflow = activeOperation.workflow || {};
+  activeOperation.workflow.steps = activeOperation.workflow.steps || {};
+  if (activeOperation.workflow.payment_method &&
+      activeOperation.workflow.steps.payment && activeOperation.workflow.steps.payment.status !== 'completed') {
+    activeOperation.workflow.steps.payment = {
+      status:'completed',
+      by:activeOperation.buyer_id,
+      ts:new Date().toISOString()
+    };
+    if (activeOperation.workflow.payment_method !== 'financiacion' &&
+        (!activeOperation.workflow.steps.financing || activeOperation.workflow.steps.financing.status !== 'completed')) {
+      activeOperation.workflow.steps.financing = {
+        status:'completed',
+        not_required:true,
+        by:activeOperation.buyer_id,
+        ts:new Date().toISOString()
+      };
+    }
+  }
+  persistWorkflow();
   openPostReservationPanel(activeOperation);
   toast('Reserva verificada. El siguiente paso quedó habilitado.', 'success');
 }
@@ -5579,7 +5602,7 @@ function verifyWorkflowReservation() {
 function completeWorkflowPayment() {
   if(!activeOperation || activeOperation.buyer_id!==currentUser.id) return;
   if(!activeOperation.workflow || !activeOperation.workflow.payment_method) return;
-  if(!activeOperation.workflow.steps || activeOperation.workflow.steps.reservation.status!=='completed') {
+  if(!activeOperation.workflow.steps || !activeOperation.workflow.steps.reservation || activeOperation.workflow.steps.reservation.status!=='completed') {
     toast('La agencia todavía debe verificar la reserva.', 'info');
     return;
   }
@@ -5588,7 +5611,7 @@ function completeWorkflowPayment() {
     setWorkflowStep('financing','completed',{not_required:true});
   }
   openPostReservationPanel(activeOperation);
-  toast('Forma de pago confirmada.', 'success');
+  toast('Forma de pago confirmada. Avanzamos al siguiente paso.', 'success');
 }
 
 function confirmWorkflowFinancing() {
@@ -5643,13 +5666,33 @@ function saveWorkflowNote() {
 }
 
 function setWorkflowPayment(method) {
-  if (!activeOperation) return;
+  if (!activeOperation || activeOperation.buyer_id !== currentUser.id) return;
   activeOperation.workflow = activeOperation.workflow || {};
+  activeOperation.workflow.steps = activeOperation.workflow.steps || {};
   activeOperation.workflow.payment_method = method;
   activeOperation.workflow.payment_selected_at = new Date().toISOString();
+
+  // Una vez verificada la reserva, elegir la forma de pago completa el paso 2.
+  // Si no requiere financiación, también completa automáticamente el paso 3.
+  if (activeOperation.workflow.steps.reservation &&
+      activeOperation.workflow.steps.reservation.status === 'completed') {
+    activeOperation.workflow.steps.payment = {
+      status:'completed',
+      by:currentUser.id,
+      ts:new Date().toISOString()
+    };
+    if (method !== 'financiacion') {
+      activeOperation.workflow.steps.financing = {
+        status:'completed',
+        not_required:true,
+        by:currentUser.id,
+        ts:new Date().toISOString()
+      };
+    }
+  }
   persistWorkflow();
   openPostReservationPanel(activeOperation);
-  toast('Forma de pago preparada', 'success');
+  toast(method === 'financiacion' ? 'Forma de pago confirmada. Ahora completá la financiación.' : 'Forma de pago confirmada. Avanzamos al siguiente paso.', 'success');
 }
 
 function saveWorkflowFinance() {
