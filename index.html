@@ -5321,6 +5321,16 @@ function syncRemoteNegotiations() {
         else ops.push(op);
         saveOperations(ops);
 
+        // Si la operación está abierta en pantalla, actualizamos el panel
+        // inmediatamente para que el siguiente paso aparezca sin recargar.
+        if (activeOperation && activeOperation.id === op.id) {
+          activeOperation = op;
+          if (payload.event === 'workflow_updated') {
+            var workflowModal = document.getElementById('post-reservation-modal');
+            if (workflowModal) openPostReservationPanel(op);
+          }
+        }
+
         var lastProposal = (op.history || []).filter(function(h) { return h.type === 'proposal'; }).pop();
         var senderIsBuyer = row.from_user === op.buyer_id;
         var carLabel = op.car_name || 'Vehículo';
@@ -5672,38 +5682,63 @@ function setWorkflowPayment(method) {
   activeOperation.workflow.payment_method = method;
   activeOperation.workflow.payment_selected_at = new Date().toISOString();
 
-  // Una vez verificada la reserva, elegir la forma de pago completa el paso 2.
-  // Si no requiere financiación, también completa automáticamente el paso 3.
-  if (activeOperation.workflow.steps.reservation &&
-      activeOperation.workflow.steps.reservation.status === 'completed') {
-    activeOperation.workflow.steps.payment = {
+  // Elegir la forma de pago completa inmediatamente el paso 2.
+  // La verificación de la reserva sigue siendo un paso propio de la agencia,
+  // pero no bloquea al comprador para cargar el resto de la operación.
+  activeOperation.workflow.steps.payment = {
+    status:'completed',
+    by:currentUser.id,
+    ts:new Date().toISOString()
+  };
+
+  if (method !== 'financiacion') {
+    activeOperation.workflow.steps.financing = {
       status:'completed',
+      not_required:true,
       by:currentUser.id,
       ts:new Date().toISOString()
     };
-    if (method !== 'financiacion') {
-      activeOperation.workflow.steps.financing = {
-        status:'completed',
-        not_required:true,
-        by:currentUser.id,
-        ts:new Date().toISOString()
-      };
-    }
+  } else {
+    // Financiación queda pendiente de completar hasta que el comprador
+    // cargue anticipo/plazo y la agencia la confirme.
+    activeOperation.workflow.steps.financing = {
+      status:'pending',
+      requested:false,
+      by:currentUser.id,
+      ts:new Date().toISOString()
+    };
   }
+
   persistWorkflow();
   openPostReservationPanel(activeOperation);
-  toast(method === 'financiacion' ? 'Forma de pago confirmada. Ahora completá la financiación.' : 'Forma de pago confirmada. Avanzamos al siguiente paso.', 'success');
+  toast(method === 'financiacion' ? 'Forma de pago guardada. Ahora completá la financiación.' : 'Forma de pago guardada. Avanzamos al siguiente paso.', 'success');
 }
 
 function saveWorkflowFinance() {
-  if (!activeOperation) return;
+  if (!activeOperation || activeOperation.buyer_id !== currentUser.id) return;
   var down=parseFloat(document.getElementById('wf-down').value)||0;
   var term=document.getElementById('wf-term').value||'';
+  if (!term) {
+    toast('Elegí un plazo de financiación.', 'info');
+    return;
+  }
+
   activeOperation.workflow=activeOperation.workflow||{};
-  activeOperation.workflow.financing={down_payment:down,term:term,requested:true};
+  activeOperation.workflow.steps=activeOperation.workflow.steps||{};
+  activeOperation.workflow.financing={down_payment:down,term:term,requested:true,requested_at:new Date().toISOString()};
+
+  // El comprador completó su parte del paso 3. La agencia queda como
+  // responsable de aprobar/verificar la financiación.
+  activeOperation.workflow.steps.financing={
+    status:'reported',
+    requested:true,
+    by:currentUser.id,
+    ts:new Date().toISOString()
+  };
+
   persistWorkflow();
   openPostReservationPanel(activeOperation);
-  toast('Datos de financiación guardados', 'success');
+  toast('Solicitud de financiación enviada. Esperando respuesta de la agencia.', 'success');
 }
 
 function addWorkflowQuestion(kind) {
