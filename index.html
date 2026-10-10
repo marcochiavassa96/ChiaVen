@@ -5452,6 +5452,8 @@ function openPostReservationPanel(op) {
   }
 
   var payment=w.payment_method||'';
+  if(payment==='financiacion') payment='cash_credit';
+  else if(payment==='transferencia'||payment==='efectivo'||payment==='mercadopago') payment='cash_transfer';
   var finance=w.financing||null;
   var tradeIn=w.trade_in||{};
   var needsFinance=payment==='cash_credit'||payment==='finance_tradein';
@@ -5551,6 +5553,7 @@ function openPostReservationPanel(op) {
         '<label style="display:block;font-size:.75rem;font-weight:600;margin:4px 0 6px">Fotos del vehículo (hasta 5, máximo 5 MB cada una)</label>'+
         '<input id="wf-tradein-photos" type="file" accept="image/*" multiple class="form-input" style="width:100%;margin-bottom:8px">'+
         (tradeIn.photos&&tradeIn.photos.length?'<div style="display:flex;gap:7px;flex-wrap:wrap;margin:8px 0">'+tradeIn.photos.map(function(url){return '<a href="'+esc(url)+'" target="_blank" rel="noopener"><img src="'+esc(url)+'" alt="Foto del usado" style="width:74px;height:58px;object-fit:cover;border-radius:8px;border:1px solid var(--border)"></a>';}).join('')+'</div>':'')+
+        (tradeIn.seller_offer?'<div style="margin:10px 0;background:var(--accent-light);border-radius:10px;padding:11px"><div style="font-size:.76rem;color:var(--text2)">Propuesta de toma de la agencia: <strong>'+fmtPrice(tradeIn.seller_offer)+'</strong></div><div style="font-size:.76rem;color:var(--text2);margin-top:4px">Diferencia estimada a pagar: <strong>'+fmtPrice(Math.max(0,Number(op.agreed_price||op.current_offer||op.initial_price||0)-Number(tradeIn.seller_offer||0)))+'</strong></div></div>':'')+
         '<button type="button" class="btn-sm primary" onclick="saveTradeInDetails()">Enviar datos y fotos a la agencia</button>';
     } else {
       tradeInAction='<div style="font-size:.76rem;color:var(--text2);margin-bottom:8px">Datos enviados por el comprador.</div>'+
@@ -5659,7 +5662,7 @@ function verifyWorkflowReservation() {
       by:activeOperation.buyer_id,
       ts:new Date().toISOString()
     };
-    if (activeOperation.workflow.payment_method !== 'financiacion' &&
+    if (activeOperation.workflow.payment_method !== 'cash_credit' && activeOperation.workflow.payment_method !== 'finance_tradein' &&
         (!activeOperation.workflow.steps.financing || activeOperation.workflow.steps.financing.status !== 'completed')) {
       activeOperation.workflow.steps.financing = {
         status:'completed',
@@ -5682,7 +5685,7 @@ function completeWorkflowPayment() {
   }
   activeOperation.workflow.steps=activeOperation.workflow.steps||{};
   activeOperation.workflow.steps.payment={status:'completed',by:currentUser.id,ts:new Date().toISOString()};
-  if(activeOperation.workflow.payment_method!=='financiacion') {
+  if(activeOperation.workflow.payment_method!=='cash_credit' && activeOperation.workflow.payment_method!=='finance_tradein') {
     activeOperation.workflow.steps.financing={status:'completed',not_required:true,by:currentUser.id,ts:new Date().toISOString()};
   } else if(!activeOperation.workflow.steps.financing) {
     activeOperation.workflow.steps.financing={status:'pending',by:currentUser.id,ts:new Date().toISOString()};
@@ -5856,7 +5859,8 @@ function saveTradeInDetails() {
   var input=document.getElementById('wf-tradein-photos');
   var files=Array.prototype.slice.call((input&&input.files)||[]);
   if(!vehicle){toast('Indicá marca, modelo y año del usado.','info');return;}
-  if(files.length>5){toast('Podés adjuntar hasta 5 fotos.','info');return;}
+  var existingPhotos=(activeOperation.workflow.trade_in&&activeOperation.workflow.trade_in.photos)||[];
+  if(existingPhotos.length+files.length>5){toast('Podés tener hasta 5 fotos en total.','info');return;}
   for(var i=0;i<files.length;i++)if(!/^image\//.test(files[i].type)||files[i].size>5*1024*1024){toast('Cada foto debe ser una imagen de hasta 5 MB.','info');return;}
   var btn=document.querySelector('#post-reservation-modal button[onclick="saveTradeInDetails()"]');
   if(btn){btn.disabled=true;btn.textContent='Subiendo fotos...';}
