@@ -5507,10 +5507,37 @@ function openPostReservationPanel(op) {
   stepsHtml += stepCard(3,'financing','📊','Financiación','Si corresponde, la solicitud queda registrada para que la agencia la gestione.','both',financeAction);
 
   var docsAction='';
-  if (isBuyer && stepStatus('documents')!=='completed') docsAction='<button type="button" class="btn-sm" onclick="addWorkflowQuestion(\'documentacion\')">📄 Solicitar documentación</button>';
-  if (isSeller && stepStatus('documents')!=='completed') docsAction='<button type="button" class="btn-sm primary" onclick="confirmWorkflowStep(\'documents\')">✓ Documentación lista</button>';
-  if (isBuyer && stepStatus('documents')==='waiting') docsAction+='<div style="font-size:.74rem;color:var(--amber);margin-top:7px">Solicitud enviada. Esperando respuesta de la agencia.</div>';
-  stepsHtml += stepCard(4,'documents','📄','Documentación','Preparación de transferencia, formularios y documentación necesaria.','seller',docsAction);
+  var docItems=[
+    {key:'form08',label:'08 firmado por vendedor',icon:'📝'},
+    {key:'police',label:'Verificación policial al día',icon:'🔎'},
+    {key:'vtv',label:'VTV al día',icon:'🚗'},
+    {key:'domain',label:'Informe de dominio y multas al día',icon:'📋'},
+    {key:'debt',label:'Libre de deuda automotor',icon:'💰'},
+    {key:'manuals',label:'Manuales',icon:'📘'},
+    {key:'duplicate_key',label:'Llave duplicado',icon:'🔑'}
+  ];
+  var docState=w.documents_checklist||{};
+  var docsDone=docItems.filter(function(d){return docState[d.key]===true;}).length;
+  var docsList='<div style="margin-top:10px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:#fff">';
+  docItems.forEach(function(d){
+    var checked=docState[d.key]===true;
+    docsList+='<button type="button" onclick="toggleWorkflowDocument(\''+d.key+'\')" style="width:100%;display:flex;align-items:center;gap:10px;padding:10px 11px;border:0;border-bottom:1px solid var(--border);background:'+(checked?'var(--green-light)':'#fff')+';cursor:'+(isSeller?'pointer':'default')+';text-align:left" '+(isSeller?'':'disabled')+'>'+
+      '<span style="width:22px;height:22px;border:2px solid '+(checked?'var(--green)':'#cbd5e1')+';border-radius:6px;display:inline-flex;align-items:center;justify-content:center;flex:none;color:var(--green);font-weight:800">'+(checked?'✓':'')+'</span>'+
+      '<span style="font-size:15px">'+d.icon+'</span><span style="font-size:.77rem;font-weight:'+(checked?'700':'500')+';color:var(--text)">'+d.label+'</span>'+
+      (checked?'<span style="margin-left:auto;font-size:.66rem;color:var(--green);font-weight:700">VERIFICADO</span>':'')+
+    '</button>';
+  });
+  docsList+='</div><div style="font-size:.69rem;color:var(--text3);margin-top:7px">'+docsDone+' de '+docItems.length+' documentos verificados'+(isSeller?' · Tocá cada documento para marcarlo.':' · La agencia debe verificarlos.')+'</div>';
+
+  docsAction=docsList;
+  if (isBuyer) {
+    docsAction+='<div style="margin-top:9px"><button type="button" class="btn-sm" onclick="addWorkflowQuestion(\'documentacion\')">📄 Solicitar documentación a la agencia</button></div>';
+  }
+  if (isSeller && docsDone===docItems.length && stepStatus('documents')!=='completed') {
+    docsAction+='<div style="margin-top:9px"><button type="button" class="btn-sm primary" onclick="confirmWorkflowStep(\'documents\')">✓ Confirmar documentación completa</button></div>';
+  }
+  if (stepStatus('documents')==='waiting') docsAction+='<div style="font-size:.74rem;color:var(--amber);margin-top:7px">Solicitud enviada. Esperando respuesta de la agencia.</div>';
+  stepsHtml += stepCard(4,'documents','📄','Documentación','Checklist de papeles y elementos necesarios para completar la operación.','seller',docsAction);
 
   var deliveryAction='';
   if (isBuyer && stepStatus('delivery')!=='completed') deliveryAction='<button type="button" class="btn-sm" onclick="addWorkflowQuestion(\'entrega\')">📅 Solicitar coordinación de entrega</button>';
@@ -5640,6 +5667,33 @@ function confirmWorkflowFinancing() {
   setWorkflowStep('financing','completed',{approved_at:new Date().toISOString()});
   openPostReservationPanel(activeOperation);
   toast('Financiación confirmada por la agencia.', 'success');
+}
+
+function toggleWorkflowDocument(key) {
+  if (!activeOperation || !currentUser || activeOperation.seller_id !== currentUser.id) {
+    toast('La verificación de documentación corresponde a la agencia.', 'info');
+    return;
+  }
+  activeOperation.workflow=activeOperation.workflow||{};
+  activeOperation.workflow.documents_checklist=activeOperation.workflow.documents_checklist||{};
+  activeOperation.workflow.documents_checklist[key]=activeOperation.workflow.documents_checklist[key] !== true;
+  var docs=activeOperation.workflow.documents_checklist;
+  var required=['form08','police','vtv','domain','debt','manuals','duplicate_key'];
+  var all=required.every(function(k){return docs[k]===true;});
+  if(all) {
+    activeOperation.workflow.steps=activeOperation.workflow.steps||{};
+    activeOperation.workflow.steps.documents={
+      status:'completed',
+      by:currentUser.id,
+      ts:new Date().toISOString(),
+      completed_at:new Date().toISOString()
+    };
+  } else if(activeOperation.workflow.steps && activeOperation.workflow.steps.documents && activeOperation.workflow.steps.documents.status==='completed') {
+    activeOperation.workflow.steps.documents={status:'pending',by:currentUser.id,ts:new Date().toISOString()};
+  }
+  persistWorkflow();
+  openPostReservationPanel(activeOperation);
+  toast(activeOperation.workflow.documents_checklist[key] ? 'Documento verificado.' : 'Documento marcado como pendiente.', 'success');
 }
 
 function confirmWorkflowStep(key) {
