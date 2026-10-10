@@ -5492,7 +5492,7 @@ function openPostReservationPanel(op) {
       (isBuyer?'<button type="button" class="btn-sm" onclick="changeWorkflowPayment()">Cambiar forma de pago</button>':'');
   } else if(isBuyer) {
     paymentAction='<div style="display:grid;grid-template-columns:1fr 1fr;gap:7px">'+
-      Object.keys(paymentLabels).map(function(v){return '<button type="button" class="btn-sm" onclick="setWorkflowPayment(\\''+v+'\\')">'+paymentLabels[v]+'</button>';}).join('')+
+      Object.keys(paymentLabels).map(function(v){return '<button type="button" class="btn-sm" onclick="setWorkflowPayment(\''+v+'\')">'+paymentLabels[v]+'</button>';}).join('')+
       '</div><div style="font-size:.72rem;color:var(--text3);margin-top:7px">Elegí la modalidad. Se habilitarán los apartados de financiación y/o usado que correspondan.</div>';
   } else paymentAction='<div style="font-size:.76rem;color:var(--text3)">Esperando que el comprador indique cómo pagará.</div>';
   stepsHtml += stepCard(2,'payment','💰','Forma de pago','Definí cómo se completará el precio acordado.','buyer',paymentAction);
@@ -5526,18 +5526,18 @@ function openPostReservationPanel(op) {
     var docsList='<div style="margin-top:10px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:#fff">';
     docItems.forEach(function(d){
       var checked=docState[d.key]===true;
-      docsList+='<button type="button" onclick="toggleWorkflowDocument(\\''+d.key+'\\')" style="width:100%;display:flex;align-items:center;gap:10px;padding:10px 11px;border:0;border-bottom:1px solid var(--border);background:'+(checked?'var(--green-light)':'#fff')+';cursor:pointer;text-align:left">'+
+      docsList+='<button type="button" onclick="toggleWorkflowDocument(\''+d.key+'\')" style="width:100%;display:flex;align-items:center;gap:10px;padding:10px 11px;border:0;border-bottom:1px solid var(--border);background:'+(checked?'var(--green-light)':'#fff')+';cursor:pointer;text-align:left">'+
         '<span style="width:22px;height:22px;border:2px solid '+(checked?'var(--green)':'#cbd5e1')+';border-radius:6px;display:inline-flex;align-items:center;justify-content:center;flex:none;color:var(--green);font-weight:800">'+(checked?'✓':'')+'</span>'+
         '<span style="font-size:15px">'+d.icon+'</span><span style="font-size:.77rem;font-weight:'+(checked?'700':'500')+';color:var(--text)">'+d.label+'</span>'+
         (checked?'<span style="margin-left:auto;font-size:.66rem;color:var(--green);font-weight:700">VERIFICADO</span>':'')+'</button>';
     });
     docsList+='</div><div style="font-size:.69rem;color:var(--text3);margin-top:7px">'+docsDone+' de '+docItems.length+' documentos verificados · Solo visible para la agencia.</div>';
     docsAction=docsList;
-    if(docsDone===docItems.length && stepStatus('documents')!=='completed') docsAction+='<div style="margin-top:9px"><button type="button" class="btn-sm primary" onclick="confirmWorkflowStep(\\'documents\\')">✓ Confirmar documentación completa</button></div>';
+    if(docsDone===docItems.length && stepStatus('documents')!=='completed') docsAction+='<div style="margin-top:9px"><button type="button" class="btn-sm primary" onclick="confirmWorkflowStep(\'documents\')">✓ Confirmar documentación completa</button></div>';
   } else {
     docsAction='<div style="font-size:.78rem;color:var(--text2);padding:10px 0">La agencia está verificando la documentación del vehículo.</div>'+
       '<div style="font-size:.72rem;color:var(--text3)">'+docsDone+' de '+docItems.length+' documentos verificados.</div>'+
-      '<div style="margin-top:9px"><button type="button" class="btn-sm" onclick="addWorkflowQuestion(\\'documentacion\\')">📄 Consultar por la documentación</button></div>';
+      '<div style="margin-top:9px"><button type="button" class="btn-sm" onclick="addWorkflowQuestion(\'documentacion\')">📄 Consultar por la documentación</button></div>';
   }
   if(stepStatus('documents')==='waiting') docsAction+='<div style="font-size:.74rem;color:var(--amber);margin-top:7px">Solicitud enviada. Esperando respuesta de la agencia.</div>';
 
@@ -5573,8 +5573,8 @@ function openPostReservationPanel(op) {
   stepsHtml += stepCard(needsTradeIn?5:4,'documents','📄','Documentación','Checklist de papeles y elementos necesarios para completar la operación.','seller',docsAction);
 
   var deliveryAction='';
-  if(isBuyer && stepStatus('delivery')!=='completed') deliveryAction='<button type="button" class="btn-sm" onclick="addWorkflowQuestion(\\'entrega\\')">📅 Solicitar coordinación de entrega</button>';
-  if(isSeller && stepStatus('delivery')!=='completed') deliveryAction='<button type="button" class="btn-sm primary" onclick="confirmWorkflowStep(\\'delivery\\')">✓ Entrega coordinada</button>';
+  if(isBuyer && stepStatus('delivery')!=='completed') deliveryAction='<button type="button" class="btn-sm" onclick="addWorkflowQuestion(\'entrega\')">📅 Solicitar coordinación de entrega</button>';
+  if(isSeller && stepStatus('delivery')!=='completed') deliveryAction='<button type="button" class="btn-sm primary" onclick="confirmWorkflowStep(\'delivery\')">✓ Entrega coordinada</button>';
   if(isBuyer && stepStatus('delivery')==='waiting') deliveryAction+='<div style="font-size:.74rem;color:var(--amber);margin-top:7px">Solicitud enviada. Esperando respuesta de la agencia.</div>';
   stepsHtml += stepCard(needsTradeIn?6:5,'delivery','🚗','Entrega','Coordiná fecha, lugar y entrega del vehículo.','seller',deliveryAction);
 
@@ -5857,7 +5857,7 @@ function saveTradeInDetails() {
   var files=Array.prototype.slice.call((input&&input.files)||[]);
   if(!vehicle){toast('Indicá marca, modelo y año del usado.','info');return;}
   if(files.length>5){toast('Podés adjuntar hasta 5 fotos.','info');return;}
-  for(var i=0;i<files.length;i++)if(!/^image\\//.test(files[i].type)||files[i].size>5*1024*1024){toast('Cada foto debe ser una imagen de hasta 5 MB.','info');return;}
+  for(var i=0;i<files.length;i++)if(!/^image\//.test(files[i].type)||files[i].size>5*1024*1024){toast('Cada foto debe ser una imagen de hasta 5 MB.','info');return;}
   var btn=document.querySelector('#post-reservation-modal button[onclick="saveTradeInDetails()"]');
   if(btn){btn.disabled=true;btn.textContent='Subiendo fotos...';}
   var existing=(activeOperation.workflow.trade_in&&activeOperation.workflow.trade_in.photos)||[];
