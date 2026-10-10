@@ -5509,15 +5509,23 @@ function openPostReservationPanel(op) {
   var docsAction='';
   if (isBuyer && stepStatus('documents')!=='completed') docsAction='<button type="button" class="btn-sm" onclick="addWorkflowQuestion(\'documentacion\')">📄 Solicitar documentación</button>';
   if (isSeller && stepStatus('documents')!=='completed') docsAction='<button type="button" class="btn-sm primary" onclick="confirmWorkflowStep(\'documents\')">✓ Documentación lista</button>';
+  if (isBuyer && stepStatus('documents')==='waiting') docsAction+='<div style="font-size:.74rem;color:var(--amber);margin-top:7px">Solicitud enviada. Esperando respuesta de la agencia.</div>';
   stepsHtml += stepCard(4,'documents','📄','Documentación','Preparación de transferencia, formularios y documentación necesaria.','seller',docsAction);
 
   var deliveryAction='';
   if (isBuyer && stepStatus('delivery')!=='completed') deliveryAction='<button type="button" class="btn-sm" onclick="addWorkflowQuestion(\'entrega\')">📅 Solicitar coordinación de entrega</button>';
   if (isSeller && stepStatus('delivery')!=='completed') deliveryAction='<button type="button" class="btn-sm primary" onclick="confirmWorkflowStep(\'delivery\')">✓ Entrega coordinada</button>';
+  if (isBuyer && stepStatus('delivery')==='waiting') deliveryAction+='<div style="font-size:.74rem;color:var(--amber);margin-top:7px">Solicitud enviada. Esperando respuesta de la agencia.</div>';
   stepsHtml += stepCard(5,'delivery','🚗','Entrega','Coordiná fecha, lugar y entrega del vehículo.','seller',deliveryAction);
 
   var balanceAction='';
-  if (stepStatus('payment')==='completed' && isBuyer && stepStatus('balance')!=='reported' && stepStatus('balance')!=='completed') balanceAction='<button type="button" class="btn-sm primary" onclick="confirmWorkflowBalance()">💳 Informar saldo pagado</button>';
+  if (isBuyer && stepStatus('balance')!=='reported' && stepStatus('balance')!=='completed') {
+    if (stepStatus('payment')==='completed') {
+      balanceAction='<button type="button" class="btn-sm primary" onclick="confirmWorkflowBalance()">💳 Informar saldo pagado</button>';
+    } else {
+      balanceAction='<div style="font-size:.76rem;color:var(--text3);margin-bottom:7px">Primero confirmá la forma de pago en el paso 2.</div><button type="button" class="btn-sm" onclick="document.getElementById(\'post-reservation-modal\').querySelector(\'div[style*=border-radius]\')">Revisar pasos anteriores</button>';
+    }
+  }
   if (stepStatus('balance')==='reported' && isSeller) balanceAction='<button type="button" class="btn-sm primary" onclick="verifyWorkflowBalance()">✓ Verificar saldo recibido</button>';
   if (stepStatus('balance')==='completed' && isSeller && stepStatus('sale')!=='completed') balanceAction='<button type="button" class="btn-sm primary" onclick="confirmSale()">🎉 Confirmar venta y completar</button>';
   stepsHtml += stepCard(6,'balance','🏦','Saldo final','Cuando corresponda, registrá el pago del saldo. La agencia deberá verificarlo antes de completar la venta.','both',balanceAction);
@@ -5610,18 +5618,21 @@ function verifyWorkflowReservation() {
 }
 
 function completeWorkflowPayment() {
-  if(!activeOperation || activeOperation.buyer_id!==currentUser.id) return;
-  if(!activeOperation.workflow || !activeOperation.workflow.payment_method) return;
-  if(!activeOperation.workflow.steps || !activeOperation.workflow.steps.reservation || activeOperation.workflow.steps.reservation.status!=='completed') {
-    toast('La agencia todavía debe verificar la reserva.', 'info');
+  if(!activeOperation || !currentUser || activeOperation.buyer_id!==currentUser.id) return;
+  if(!activeOperation.workflow || !activeOperation.workflow.payment_method) {
+    toast('Primero elegí una forma de pago.', 'info');
     return;
   }
-  setWorkflowStep('payment','completed');
-  if (activeOperation.workflow.payment_method !== 'financiacion') {
-    setWorkflowStep('financing','completed',{not_required:true});
+  activeOperation.workflow.steps=activeOperation.workflow.steps||{};
+  activeOperation.workflow.steps.payment={status:'completed',by:currentUser.id,ts:new Date().toISOString()};
+  if(activeOperation.workflow.payment_method!=='financiacion') {
+    activeOperation.workflow.steps.financing={status:'completed',not_required:true,by:currentUser.id,ts:new Date().toISOString()};
+  } else if(!activeOperation.workflow.steps.financing) {
+    activeOperation.workflow.steps.financing={status:'pending',by:currentUser.id,ts:new Date().toISOString()};
   }
+  persistWorkflow();
   openPostReservationPanel(activeOperation);
-  toast('Forma de pago confirmada. Avanzamos al siguiente paso.', 'success');
+  toast('Forma de pago confirmada. El siguiente paso quedó habilitado.', 'success');
 }
 
 function confirmWorkflowFinancing() {
@@ -5632,8 +5643,12 @@ function confirmWorkflowFinancing() {
 }
 
 function confirmWorkflowStep(key) {
-  if(!activeOperation) return;
+  if(!activeOperation || !currentUser || activeOperation.seller_id!==currentUser.id) {
+    toast('Este paso debe confirmarlo la agencia.', 'info');
+    return;
+  }
   setWorkflowStep(key,'completed');
+  activeOperation.workflow.steps[key].completed_at=new Date().toISOString();
   openPostReservationPanel(activeOperation);
   toast('Paso actualizado.', 'success');
 }
@@ -5742,14 +5757,18 @@ function saveWorkflowFinance() {
 }
 
 function addWorkflowQuestion(kind) {
-  if (!activeOperation) return;
+  if (!activeOperation || !currentUser) return;
   activeOperation.workflow=activeOperation.workflow||{};
+  activeOperation.workflow.steps=activeOperation.workflow.steps||{};
   activeOperation.workflow.questions=activeOperation.workflow.questions||[];
   activeOperation.workflow.questions.push({type:kind,from:currentUser.id,ts:new Date().toISOString()});
+  var stepKey=kind==='documentacion'?'documents':kind==='entrega'?'delivery':null;
+  if(stepKey) activeOperation.workflow.steps[stepKey]={status:'waiting',requested_by:currentUser.id,ts:new Date().toISOString()};
   var recipient=activeOperation.buyer_id===currentUser.id?activeOperation.seller_id:activeOperation.buyer_id;
   var labels={documentacion:'📄 Solicité información sobre la documentación.',entrega:'📅 Quiero coordinar la fecha/lugar de entrega.',transferencia:'🔑 Quiero coordinar la transferencia.',saldo:'💰 Quiero coordinar el pago del saldo.'};
-  getSB().from('messages').insert(buildChatRow(activeOperation.car_id,activeOperation.buyer_id,activeOperation.seller_id,'text',{to_user:recipient,operation_id:activeOperation.id,text:labels[kind]}));
+  getSB().from('messages').insert(buildChatRow(activeOperation.car_id,activeOperation.buyer_id,activeOperation.seller_id,'text',{to_user:recipient,operation_id:activeOperation.id,text:labels[kind]})).then(function(r){if(r&&r.error)console.error('No se pudo enviar solicitud de operación:',r.error);});
   persistWorkflow();
+  openPostReservationPanel(activeOperation);
   toast('Solicitud enviada a la otra parte', 'success');
 }
 
