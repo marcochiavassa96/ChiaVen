@@ -5453,12 +5453,22 @@ function openPostReservationPanel(op) {
 
   var payment=w.payment_method||'';
   var finance=w.financing||null;
-  var paymentLabels={transferencia:'🏦 Transferencia',efectivo:'💵 Efectivo',mercadopago:'💳 Mercado Pago',financiacion:'📊 Financiación'};
-  var stepKeys=['reservation','payment','financing','documents','delivery','balance','sale'];
-  var completedCount=stepKeys.filter(function(k){ return stepStatus(k)==='completed'; }).length;
+  var tradeIn=w.trade_in||{};
+  var needsFinance=payment==='cash_credit'||payment==='finance_tradein';
+  var needsTradeIn=payment==='cash_tradein'||payment==='finance_tradein';
+  var paymentLabels={
+    cash_transfer:'💵 Efectivo / transferencia',
+    cash_credit:'💵 Efectivo + crédito',
+    cash_tradein:'🚗 Efectivo + usado',
+    finance_tradein:'📊 Financiación + usado'
+  };
+  var stepKeys=['reservation','payment','financing'];
+  if(needsTradeIn) stepKeys.push('tradein');
+  stepKeys=stepKeys.concat(['documents','delivery','balance','sale']);
+  var completedCount=stepKeys.filter(function(k){return stepStatus(k)==='completed';}).length;
   var progress=Math.round((completedCount/stepKeys.length)*100);
-  var currentStep=stepKeys.find(function(k){ return stepStatus(k)!=='completed'; }) || 'balance';
-  var currentLabels={reservation:'Verificación de reserva',payment:'Forma de pago',financing:'Financiación',documents:'Documentación',delivery:'Entrega',balance:'Saldo final',sale:'Confirmación de venta'};
+  var currentStep=stepKeys.find(function(k){return stepStatus(k)!=='completed';})||'balance';
+  var currentLabels={reservation:'Verificación de reserva',payment:'Forma de pago',financing:'Financiación',tradein:'Vehículo usado en parte de pago',documents:'Documentación',delivery:'Entrega',balance:'Saldo final',sale:'Confirmación de venta'};
   var progressHtml='<div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:13px 14px;margin-bottom:14px">'+
     '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px">'+
       '<div><div style="font-size:.68rem;color:var(--text3);text-transform:uppercase;letter-spacing:.04em">Progreso de la operación</div><div style="font-weight:700;margin-top:2px">'+(progress===100?'🎉 Operación lista para completar':'Siguiente paso: '+currentLabels[currentStep])+'</div></div>'+
@@ -5477,32 +5487,26 @@ function openPostReservationPanel(op) {
       ? '<button type="button" class="btn-sm primary" onclick="verifyWorkflowReservation()">✓ Confirmar reserva recibida</button>' : '');
 
   var paymentAction='';
-  if (payment) {
-    paymentAction='<div style="font-size:.78rem;font-weight:600;margin-bottom:8px">'+paymentLabels[payment]+'</div>';
-    if (isBuyer && stepStatus('payment')!=='completed') {
-      paymentAction+='<button type="button" class="btn-sm primary" onclick="completeWorkflowPayment()">✓ Confirmar forma de pago</button>';
-      if (stepStatus('reservation')!=='completed') paymentAction+='<div style="font-size:.72rem;color:var(--text3);margin-top:7px">Podés dejarla preparada. Se habilitará cuando la agencia verifique la reserva.</div>';
-    }
-  } else if (isBuyer) {
+  if(payment) {
+    paymentAction='<div style="font-size:.78rem;font-weight:600;margin-bottom:8px">'+paymentLabels[payment]+'</div>'+
+      (isBuyer?'<button type="button" class="btn-sm" onclick="changeWorkflowPayment()">Cambiar forma de pago</button>':'');
+  } else if(isBuyer) {
     paymentAction='<div style="display:grid;grid-template-columns:1fr 1fr;gap:7px">'+
-      Object.keys(paymentLabels).map(function(v){return '<button type="button" class="btn-sm" onclick="setWorkflowPayment(\''+v+'\')">'+paymentLabels[v]+'</button>';}).join('')+
-      '</div><div style="font-size:.72rem;color:var(--text3);margin-top:7px">Elegí cómo pensás pagar el saldo. Después podrás confirmarlo.</div>';
-  } else {
-    paymentAction='<div style="font-size:.76rem;color:var(--text3)">Esperando que el comprador indique cómo pagará el saldo.</div>';
-  }
-  stepsHtml += stepCard(2,'payment','💰','Forma de pago','Definí y confirmá cómo se pagará el saldo restante.','buyer',paymentAction);
+      Object.keys(paymentLabels).map(function(v){return '<button type="button" class="btn-sm" onclick="setWorkflowPayment(\\''+v+'\\')">'+paymentLabels[v]+'</button>';}).join('')+
+      '</div><div style="font-size:.72rem;color:var(--text3);margin-top:7px">Elegí la modalidad. Se habilitarán los apartados de financiación y/o usado que correspondan.</div>';
+  } else paymentAction='<div style="font-size:.76rem;color:var(--text3)">Esperando que el comprador indique cómo pagará.</div>';
+  stepsHtml += stepCard(2,'payment','💰','Forma de pago','Definí cómo se completará el precio acordado.','buyer',paymentAction);
 
   var financeAction='';
-  if (!payment) {
-    financeAction='<div style="font-size:.76rem;color:var(--text3)">Primero elegí la forma de pago en el paso 2.</div>';
-  } else if (payment==='financiacion') {
-    if (finance) financeAction='<div style="font-size:.76rem;color:var(--text2);margin-bottom:8px">Anticipo: <strong>'+fmtPrice(finance.down_payment||0)+'</strong> · Plazo: <strong>'+esc(finance.term||'')+'</strong></div>';
-    if (isBuyer && stepStatus('financing')!=='completed') {
-      financeAction += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:7px"><input id="wf-down" class="form-input" type="number" placeholder="Anticipo" value="'+(finance&&finance.down_payment||'')+'"><select id="wf-term" class="form-input"><option value="">Plazo</option><option>12 meses</option><option>24 meses</option><option>36 meses</option><option>48 meses</option><option>60 meses</option></select></div><button type="button" class="btn-sm primary" onclick="saveWorkflowFinance()">Guardar solicitud</button>';
-    }
-    if (isSeller && finance && stepStatus('financing')!=='completed') financeAction += '<button type="button" class="btn-sm primary" onclick="confirmWorkflowFinancing()">✓ Confirmar financiación</button>';
+  if(!payment || !needsFinance) {
+    financeAction='<div style="font-size:.76rem;color:var(--text3)">'+(!payment?'Primero elegí la forma de pago.':'No se requiere financiación con esta modalidad.')+'</div>';
   } else {
-    financeAction='<div style="font-size:.76rem;color:var(--text3)">No se requiere financiación.</div>';
+    if(finance) financeAction='<div style="font-size:.76rem;color:var(--text2);margin-bottom:8px">Anticipo: <strong>'+fmtPrice(finance.down_payment||0)+'</strong> · Plazo: <strong>'+esc(finance.term||'')+'</strong></div>';
+    if(isBuyer && stepStatus('financing')!=='completed') {
+      financeAction+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:7px"><input id="wf-down" class="form-input" type="number" min="0" placeholder="Anticipo" value="'+(finance&&finance.down_payment||'')+'"><select id="wf-term" class="form-input"><option value="">Plazo</option><option>12 meses</option><option>18 meses</option><option>24 meses</option><option>36 meses</option><option>48 meses</option><option>60 meses</option></select></div><button type="button" class="btn-sm primary" onclick="saveWorkflowFinance()">Enviar solicitud de financiación</button>';
+    }
+    if(isSeller && finance && stepStatus('financing')!=='completed') financeAction+='<button type="button" class="btn-sm primary" onclick="confirmWorkflowFinancing()">✓ Confirmar financiación</button>';
+    if(stepStatus('financing')==='reported' && isBuyer) financeAction+='<div style="font-size:.74rem;color:var(--amber);margin-top:7px">Solicitud enviada. Esperando respuesta de la agencia.</div>';
   }
   stepsHtml += stepCard(3,'financing','📊','Financiación','Si corresponde, la solicitud queda registrada para que la agencia la gestione.','both',financeAction);
 
@@ -5518,51 +5522,77 @@ function openPostReservationPanel(op) {
   ];
   var docState=w.documents_checklist||{};
   var docsDone=docItems.filter(function(d){return docState[d.key]===true;}).length;
-  var docsList='<div style="margin-top:10px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:#fff">';
-  docItems.forEach(function(d){
-    var checked=docState[d.key]===true;
-    docsList+='<button type="button" onclick="toggleWorkflowDocument(\''+d.key+'\')" style="width:100%;display:flex;align-items:center;gap:10px;padding:10px 11px;border:0;border-bottom:1px solid var(--border);background:'+(checked?'var(--green-light)':'#fff')+';cursor:'+(isSeller?'pointer':'default')+';text-align:left" '+(isSeller?'':'disabled')+'>'+
-      '<span style="width:22px;height:22px;border:2px solid '+(checked?'var(--green)':'#cbd5e1')+';border-radius:6px;display:inline-flex;align-items:center;justify-content:center;flex:none;color:var(--green);font-weight:800">'+(checked?'✓':'')+'</span>'+
-      '<span style="font-size:15px">'+d.icon+'</span><span style="font-size:.77rem;font-weight:'+(checked?'700':'500')+';color:var(--text)">'+d.label+'</span>'+
-      (checked?'<span style="margin-left:auto;font-size:.66rem;color:var(--green);font-weight:700">VERIFICADO</span>':'')+
-    '</button>';
-  });
-  docsList+='</div><div style="font-size:.69rem;color:var(--text3);margin-top:7px">'+docsDone+' de '+docItems.length+' documentos verificados'+(isSeller?' · Tocá cada documento para marcarlo.':' · La agencia debe verificarlos.')+'</div>';
+  if(isSeller) {
+    var docsList='<div style="margin-top:10px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:#fff">';
+    docItems.forEach(function(d){
+      var checked=docState[d.key]===true;
+      docsList+='<button type="button" onclick="toggleWorkflowDocument(\\''+d.key+'\\')" style="width:100%;display:flex;align-items:center;gap:10px;padding:10px 11px;border:0;border-bottom:1px solid var(--border);background:'+(checked?'var(--green-light)':'#fff')+';cursor:pointer;text-align:left">'+
+        '<span style="width:22px;height:22px;border:2px solid '+(checked?'var(--green)':'#cbd5e1')+';border-radius:6px;display:inline-flex;align-items:center;justify-content:center;flex:none;color:var(--green);font-weight:800">'+(checked?'✓':'')+'</span>'+
+        '<span style="font-size:15px">'+d.icon+'</span><span style="font-size:.77rem;font-weight:'+(checked?'700':'500')+';color:var(--text)">'+d.label+'</span>'+
+        (checked?'<span style="margin-left:auto;font-size:.66rem;color:var(--green);font-weight:700">VERIFICADO</span>':'')+'</button>';
+    });
+    docsList+='</div><div style="font-size:.69rem;color:var(--text3);margin-top:7px">'+docsDone+' de '+docItems.length+' documentos verificados · Solo visible para la agencia.</div>';
+    docsAction=docsList;
+    if(docsDone===docItems.length && stepStatus('documents')!=='completed') docsAction+='<div style="margin-top:9px"><button type="button" class="btn-sm primary" onclick="confirmWorkflowStep(\\'documents\\')">✓ Confirmar documentación completa</button></div>';
+  } else {
+    docsAction='<div style="font-size:.78rem;color:var(--text2);padding:10px 0">La agencia está verificando la documentación del vehículo.</div>'+
+      '<div style="font-size:.72rem;color:var(--text3)">'+docsDone+' de '+docItems.length+' documentos verificados.</div>'+
+      '<div style="margin-top:9px"><button type="button" class="btn-sm" onclick="addWorkflowQuestion(\\'documentacion\\')">📄 Consultar por la documentación</button></div>';
+  }
+  if(stepStatus('documents')==='waiting') docsAction+='<div style="font-size:.74rem;color:var(--amber);margin-top:7px">Solicitud enviada. Esperando respuesta de la agencia.</div>';
 
-  docsAction=docsList;
-  if (isBuyer) {
-    docsAction+='<div style="margin-top:9px"><button type="button" class="btn-sm" onclick="addWorkflowQuestion(\'documentacion\')">📄 Solicitar documentación a la agencia</button></div>';
+  if(needsTradeIn) {
+    var tradeInAction='';
+    if(isBuyer) {
+      tradeInAction='<div style="font-size:.76rem;color:var(--text2);margin-bottom:8px">Informá el vehículo que entregás como parte de pago. Podés adjuntar hasta 5 fotos.</div>'+
+        '<input id="wf-tradein-name" class="form-input" placeholder="Marca, modelo, versión y año" value="'+esc(tradeIn.vehicle||'')+'" style="width:100%;margin-bottom:8px">'+
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px"><input id="wf-tradein-km" class="form-input" type="number" min="0" placeholder="Kilómetros" value="'+(tradeIn.km||'')+'"><input id="wf-tradein-price" class="form-input" type="number" min="0" placeholder="Precio de referencia ($)" value="'+(tradeIn.reference_price||'')+'"></div>'+
+        '<textarea id="wf-tradein-details" class="form-input" rows="3" placeholder="Estado, versión, motor, detalles, deudas..." style="width:100%;margin-bottom:8px">'+esc(tradeIn.details||'')+'</textarea>'+
+        '<label style="display:block;font-size:.75rem;font-weight:600;margin:4px 0 6px">Fotos del vehículo (hasta 5, máximo 5 MB cada una)</label>'+
+        '<input id="wf-tradein-photos" type="file" accept="image/*" multiple class="form-input" style="width:100%;margin-bottom:8px">'+
+        (tradeIn.photos&&tradeIn.photos.length?'<div style="display:flex;gap:7px;flex-wrap:wrap;margin:8px 0">'+tradeIn.photos.map(function(url){return '<a href="'+esc(url)+'" target="_blank" rel="noopener"><img src="'+esc(url)+'" alt="Foto del usado" style="width:74px;height:58px;object-fit:cover;border-radius:8px;border:1px solid var(--border)"></a>';}).join('')+'</div>':'')+
+        '<button type="button" class="btn-sm primary" onclick="saveTradeInDetails()">Enviar datos y fotos a la agencia</button>';
+    } else {
+      tradeInAction='<div style="font-size:.76rem;color:var(--text2);margin-bottom:8px">Datos enviados por el comprador.</div>'+
+        (tradeIn.vehicle?'<div style="font-weight:700;margin-bottom:5px">'+esc(tradeIn.vehicle)+'</div>':'<div style="color:var(--text3)">Todavía no se cargaron los datos del usado.</div>')+
+        '<div style="font-size:.78rem;margin-bottom:5px">Kilómetros: '+esc(String(tradeIn.km||'No informado'))+'</div>'+
+        '<div style="font-size:.78rem;margin-bottom:5px">Precio de referencia: <strong>'+fmtPrice(tradeIn.reference_price||0)+'</strong></div>'+
+        (tradeIn.details?'<div style="font-size:.78rem;white-space:pre-wrap;margin:8px 0">'+esc(tradeIn.details)+'</div>':'')+
+        (tradeIn.photos&&tradeIn.photos.length?'<div style="display:flex;gap:7px;flex-wrap:wrap;margin:8px 0">'+tradeIn.photos.map(function(url){return '<a href="'+esc(url)+'" target="_blank" rel="noopener"><img src="'+esc(url)+'" alt="Foto del usado" style="width:84px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--border)"></a>';}).join('')+'</div>':'<div style="font-size:.72rem;color:var(--text3)">Todavía no adjuntó fotos.</div>')+
+        '<label style="display:block;font-size:.75rem;font-weight:600;margin:12px 0 6px">Tu propuesta de toma ($)</label>'+
+        '<input id="wf-tradein-offer" class="form-input" type="number" min="0" placeholder="Valor que ofrece la agencia" value="'+(tradeIn.seller_offer||'')+'" style="width:100%;margin-bottom:8px">'+
+        '<button type="button" class="btn-sm primary" onclick="sendTradeInOffer()">Enviar propuesta de toma</button>';
+      if(tradeIn.seller_offer) {
+        var carPrice=Number(op.agreed_price||op.current_offer||op.initial_price||0);
+        tradeInAction+='<div style="margin-top:12px;background:var(--accent-light);border-radius:10px;padding:11px"><div style="font-size:.74rem;color:var(--text2)">Valor de toma propuesto: <strong>'+fmtPrice(tradeIn.seller_offer)+'</strong></div><div style="font-size:.74rem;color:var(--text2);margin-top:4px">Diferencia estimada a pagar: <strong>'+fmtPrice(Math.max(0,carPrice-Number(tradeIn.seller_offer||0)))+'</strong></div></div>';
+      }
+    }
+    stepsHtml+=stepCard(4,'tradein','🚗','Vehículo usado en parte de pago','El comprador informa su vehículo y la agencia propone el valor de toma.','both',tradeInAction);
   }
-  if (isSeller && docsDone===docItems.length && stepStatus('documents')!=='completed') {
-    docsAction+='<div style="margin-top:9px"><button type="button" class="btn-sm primary" onclick="confirmWorkflowStep(\'documents\')">✓ Confirmar documentación completa</button></div>';
-  }
-  if (stepStatus('documents')==='waiting') docsAction+='<div style="font-size:.74rem;color:var(--amber);margin-top:7px">Solicitud enviada. Esperando respuesta de la agencia.</div>';
-  stepsHtml += stepCard(4,'documents','📄','Documentación','Checklist de papeles y elementos necesarios para completar la operación.','seller',docsAction);
+
+  stepsHtml += stepCard(needsTradeIn?5:4,'documents','📄','Documentación','Checklist de papeles y elementos necesarios para completar la operación.','seller',docsAction);
 
   var deliveryAction='';
-  if (isBuyer && stepStatus('delivery')!=='completed') deliveryAction='<button type="button" class="btn-sm" onclick="addWorkflowQuestion(\'entrega\')">📅 Solicitar coordinación de entrega</button>';
-  if (isSeller && stepStatus('delivery')!=='completed') deliveryAction='<button type="button" class="btn-sm primary" onclick="confirmWorkflowStep(\'delivery\')">✓ Entrega coordinada</button>';
-  if (isBuyer && stepStatus('delivery')==='waiting') deliveryAction+='<div style="font-size:.74rem;color:var(--amber);margin-top:7px">Solicitud enviada. Esperando respuesta de la agencia.</div>';
-  stepsHtml += stepCard(5,'delivery','🚗','Entrega','Coordiná fecha, lugar y entrega del vehículo.','seller',deliveryAction);
+  if(isBuyer && stepStatus('delivery')!=='completed') deliveryAction='<button type="button" class="btn-sm" onclick="addWorkflowQuestion(\\'entrega\\')">📅 Solicitar coordinación de entrega</button>';
+  if(isSeller && stepStatus('delivery')!=='completed') deliveryAction='<button type="button" class="btn-sm primary" onclick="confirmWorkflowStep(\\'delivery\\')">✓ Entrega coordinada</button>';
+  if(isBuyer && stepStatus('delivery')==='waiting') deliveryAction+='<div style="font-size:.74rem;color:var(--amber);margin-top:7px">Solicitud enviada. Esperando respuesta de la agencia.</div>';
+  stepsHtml += stepCard(needsTradeIn?6:5,'delivery','🚗','Entrega','Coordiná fecha, lugar y entrega del vehículo.','seller',deliveryAction);
 
   var balanceAction='';
-  if (isBuyer && stepStatus('balance')!=='reported' && stepStatus('balance')!=='completed') {
-    if (stepStatus('payment')==='completed') {
-      balanceAction='<button type="button" class="btn-sm primary" onclick="confirmWorkflowBalance()">💳 Informar saldo pagado</button>';
-    } else {
-      balanceAction='<div style="font-size:.76rem;color:var(--text3);margin-bottom:7px">Primero confirmá la forma de pago en el paso 2.</div><button type="button" class="btn-sm" onclick="document.getElementById(\'post-reservation-modal\').querySelector(\'div[style*=border-radius]\')">Revisar pasos anteriores</button>';
-    }
+  if(isBuyer && stepStatus('balance')!=='reported' && stepStatus('balance')!=='completed') {
+    if(stepStatus('payment')==='completed') balanceAction='<button type="button" class="btn-sm primary" onclick="confirmWorkflowBalance()">💳 Informar saldo pagado</button>';
+    else balanceAction='<div style="font-size:.76rem;color:var(--text3)">Primero completá la forma de pago.</div>';
   }
-  if (stepStatus('balance')==='reported' && isSeller) balanceAction='<button type="button" class="btn-sm primary" onclick="verifyWorkflowBalance()">✓ Verificar saldo recibido</button>';
-  if (stepStatus('balance')==='completed' && isSeller && stepStatus('sale')!=='completed') balanceAction='<button type="button" class="btn-sm primary" onclick="confirmSale()">🎉 Confirmar venta y completar</button>';
-  stepsHtml += stepCard(6,'balance','🏦','Saldo final','Cuando corresponda, registrá el pago del saldo. La agencia deberá verificarlo antes de completar la venta.','both',balanceAction);
+  if(stepStatus('balance')==='reported' && isSeller) balanceAction='<button type="button" class="btn-sm primary" onclick="verifyWorkflowBalance()">✓ Verificar saldo recibido</button>';
+  if(stepStatus('balance')==='completed' && isSeller && stepStatus('sale')!=='completed') balanceAction='<button type="button" class="btn-sm primary" onclick="confirmSale()">🎉 Confirmar venta y completar</button>';
+  stepsHtml += stepCard(needsTradeIn?7:6,'balance','🏦','Saldo final','Cuando corresponda, registrá el pago del saldo. La agencia deberá verificarlo antes de completar la venta.','both',balanceAction);
 
   var saleAction='';
-  if (stepStatus('balance')!=='completed') saleAction='<div style="font-size:.76rem;color:var(--text3)">Primero debe verificarse el saldo final.</div>';
-  else if (stepStatus('sale')==='completed') saleAction='<div style="font-size:.78rem;color:var(--green);font-weight:700">✓ La venta quedó registrada y la operación está completada.</div>';
-  else if (isSeller) saleAction='<button type="button" class="btn-sm primary" onclick="confirmSale()">🎉 Confirmar venta y completar operación</button>';
+  if(stepStatus('balance')!=='completed') saleAction='<div style="font-size:.76rem;color:var(--text3)">Primero debe verificarse el saldo final.</div>';
+  else if(stepStatus('sale')==='completed') saleAction='<div style="font-size:.78rem;color:var(--green);font-weight:700">✓ La venta quedó registrada y la operación está completada.</div>';
+  else if(isSeller) saleAction='<button type="button" class="btn-sm primary" onclick="confirmSale()">🎉 Confirmar venta y completar operación</button>';
   else saleAction='<div style="font-size:.76rem;color:var(--text3)">Esperando la confirmación final de la agencia.</div>';
-  stepsHtml += stepCard(7,'sale','🎉','Confirmación de venta','La agencia confirma que recibió el saldo y que la operación queda finalizada.','seller',saleAction);
+  stepsHtml += stepCard(needsTradeIn?8:7,'sale','🎉','Confirmación de venta','La agencia confirma que recibió el saldo y que la operación queda finalizada.','seller',saleAction);
 
   var coordNote=(w.coordination_note||'');
   stepsHtml += '<div style="margin-top:14px;border-top:1px solid var(--border);padding-top:14px">'+
@@ -5760,23 +5790,10 @@ function setWorkflowPayment(method) {
     ts:new Date().toISOString()
   };
 
-  if (method !== 'financiacion') {
-    activeOperation.workflow.steps.financing = {
-      status:'completed',
-      not_required:true,
-      by:currentUser.id,
-      ts:new Date().toISOString()
-    };
-  } else {
-    // Financiación queda pendiente de completar hasta que el comprador
-    // cargue anticipo/plazo y la agencia la confirme.
-    activeOperation.workflow.steps.financing = {
-      status:'pending',
-      requested:false,
-      by:currentUser.id,
-      ts:new Date().toISOString()
-    };
-  }
+  var needsFinance=method==='cash_credit'||method==='finance_tradein';
+  var needsTradeIn=method==='cash_tradein'||method==='finance_tradein';
+  activeOperation.workflow.steps.financing=needsFinance?{status:'pending',requested:false,by:currentUser.id,ts:new Date().toISOString()}:{status:'completed',not_required:true,by:currentUser.id,ts:new Date().toISOString()};
+  activeOperation.workflow.steps.tradein=needsTradeIn?{status:'pending',requested:false,by:currentUser.id,ts:new Date().toISOString()}:{status:'completed',not_required:true,by:currentUser.id,ts:new Date().toISOString()};
 
   persistWorkflow();
   openPostReservationPanel(activeOperation);
@@ -5808,6 +5825,66 @@ function saveWorkflowFinance() {
   persistWorkflow();
   openPostReservationPanel(activeOperation);
   toast('Solicitud de financiación enviada. Esperando respuesta de la agencia.', 'success');
+}
+
+function changeWorkflowPayment() {
+  if(!activeOperation||!currentUser||activeOperation.buyer_id!==currentUser.id)return;
+  activeOperation.workflow=activeOperation.workflow||{};
+  activeOperation.workflow.payment_method='';
+  activeOperation.workflow.steps=activeOperation.workflow.steps||{};
+  activeOperation.workflow.steps.payment={status:'pending',by:currentUser.id,ts:new Date().toISOString()};
+  persistWorkflow();openPostReservationPanel(activeOperation);
+}
+
+function uploadTradeInPhoto(file,index) {
+  return file.arrayBuffer().then(function(ab){
+    var name=(file.name||('foto_'+index+'.jpg')).replace(/[^a-zA-Z0-9._-]/g,'_');
+    var path='trade-ins/'+String(activeOperation.id).replace(/[^a-zA-Z0-9_-]/g,'_')+'/'+String(currentUser.id).replace(/[^a-zA-Z0-9_-]/g,'_')+'/'+Date.now()+'_'+index+'_'+name;
+    return fetch(SUPABASE_URL+'/storage/v1/object/car-images/'+path,{method:'POST',headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+((_session&&_session.access_token)||SUPABASE_KEY),'Content-Type':file.type||'image/jpeg','x-upsert':'false'},body:ab}).then(function(res){
+      if(!res.ok)throw new Error('Storage rechazó la foto ('+res.status+').');
+      return SUPABASE_URL+'/storage/v1/object/public/car-images/'+path;
+    });
+  });
+}
+
+function saveTradeInDetails() {
+  if(!activeOperation||!currentUser||activeOperation.buyer_id!==currentUser.id)return;
+  var vehicle=(document.getElementById('wf-tradein-name').value||'').trim();
+  var km=parseInt(document.getElementById('wf-tradein-km').value,10)||0;
+  var reference=parseFloat(document.getElementById('wf-tradein-price').value)||0;
+  var details=(document.getElementById('wf-tradein-details').value||'').trim();
+  var input=document.getElementById('wf-tradein-photos');
+  var files=Array.prototype.slice.call((input&&input.files)||[]);
+  if(!vehicle){toast('Indicá marca, modelo y año del usado.','info');return;}
+  if(files.length>5){toast('Podés adjuntar hasta 5 fotos.','info');return;}
+  for(var i=0;i<files.length;i++)if(!/^image\\//.test(files[i].type)||files[i].size>5*1024*1024){toast('Cada foto debe ser una imagen de hasta 5 MB.','info');return;}
+  var btn=document.querySelector('#post-reservation-modal button[onclick="saveTradeInDetails()"]');
+  if(btn){btn.disabled=true;btn.textContent='Subiendo fotos...';}
+  var existing=(activeOperation.workflow.trade_in&&activeOperation.workflow.trade_in.photos)||[];
+  Promise.all(files.map(function(file,i){return uploadTradeInPhoto(file,i+1);})).then(function(urls){
+    var w=activeOperation.workflow=activeOperation.workflow||{};
+    w.trade_in=w.trade_in||{};
+    w.trade_in.vehicle=vehicle;w.trade_in.km=km;w.trade_in.reference_price=reference;w.trade_in.details=details;
+    w.trade_in.photos=existing.concat(urls).slice(0,5);w.trade_in.submitted_at=new Date().toISOString();
+    w.steps=w.steps||{};w.steps.tradein={status:'reported',by:currentUser.id,ts:new Date().toISOString()};
+    persistWorkflow();openPostReservationPanel(activeOperation);toast('Datos y fotos del usado enviados a la agencia.','success');
+  }).catch(function(err){
+    console.error('Error subiendo fotos del usado:',err);
+    if(btn){btn.disabled=false;btn.textContent='Enviar datos y fotos a la agencia';}
+    toast('No se pudieron subir las fotos. Verificá los permisos de Supabase Storage.','error');
+  });
+}
+
+function sendTradeInOffer() {
+  if(!activeOperation||!currentUser||activeOperation.seller_id!==currentUser.id)return;
+  var val=parseFloat(document.getElementById('wf-tradein-offer').value)||0;
+  if(val<=0){toast('Ingresá el valor de toma propuesto por la agencia.','info');return;}
+  var w=activeOperation.workflow=activeOperation.workflow||{};
+  w.trade_in=w.trade_in||{};w.trade_in.seller_offer=val;w.trade_in.seller_offer_at=new Date().toISOString();
+  w.steps=w.steps||{};w.steps.tradein={status:'reported',by:currentUser.id,ts:new Date().toISOString(),seller_offer:val};
+  persistWorkflow();
+  getSB().from('messages').insert(buildChatRow(activeOperation.car_id,activeOperation.buyer_id,activeOperation.seller_id,'text',{to_user:activeOperation.buyer_id,operation_id:activeOperation.id,text:'🚗 La agencia propuso tomar tu usado en '+fmtPrice(val)+'. Diferencia estimada a pagar: '+fmtPrice(Math.max(0,Number(activeOperation.agreed_price||activeOperation.current_offer||activeOperation.initial_price||0)-val))+'.'}));
+  openPostReservationPanel(activeOperation);toast('Propuesta de toma enviada al comprador.','success');
 }
 
 function addWorkflowQuestion(kind) {
